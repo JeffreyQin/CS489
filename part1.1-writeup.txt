@@ -1,0 +1,15 @@
+The script uses a set of cleaning criteria universally applied to all languages, performed in the following order:
+
+\begin{itemize}
+    \item Remove wiki tables. A table starts with \{| at the beginning of a line and runs to the matching |\}. Nested tables are included, and the text inside is removed. \{| \{| on one line is still one table, and a \{| inside a sentence is left alone.
+    \item Decode HTML entities. A non-breaking space becomes a normal space, and the zero-width space and the soft hyphen are deleted.
+    \item Remove HTML comments, as enclosed by <!--...-->.
+    \item Remove reference tags, including self-closing tags in the form <ref name="..."/> and paired tags <ref>...</ref>. Self-closing tags are removed first.
+    \item Remove template wrappers of the form \{\{...\}\} whose interior contains no braces. This is repeated three times, so a wrapper around a simpler template is removed on a later pass. A template that still contains a brace is left in place.
+    \item Resolve Chinese variant switches -\{...\}-. The kept form is zh-hans if present, otherwise zh-cn, otherwise zh-sg. A switch with none of those labels keeps the unmarked text.
+    \item Remove category links such as [[Category:...]] and image links such as [[File:...]]. An image link is deleted whole, caption included. An ordinary wiki link [[original name|shown name]] keeps the shown name, and [[name]] keeps the name (for example, "[[nam]]es" becomes "names"). An external link [https://... name] keeps the name, and a bare [https://...] is replaced by a space.
+    \item Remove bold (''') and italic ('') markers, and strip a leading *, \#, ;, or : from a line. A line of four or more dashes is removed.
+    \item Remove heading wrappers that enclose text with at least two and at most six equal signs (e.g., ==, ======).
+    \item Turn <br> and <br /> into newlines. Other leftover tags, such as <sup>...</sup>, are removed and the text inside them is kept.
+    \item Remove trailing whitespace on each line and collapse repeated spaces. Compress consecutive newlines so that there is at most a single blank line between paragraphs.
+\end{itemize}

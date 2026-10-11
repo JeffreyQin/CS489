@@ -1,0 +1,160 @@
+Part 3.1 unsmoothed n-gram model
+
+part3_ngram_lm.py trains a maximum-likelihood n-gram model on the BPE token ids of the cleaned training lines. Each line is encoded on its own with the submitted 50,000-token byte-BPE model, then the end-of-line token EOS (id 50,000) is appended and scored with the other tokens. N-grams do not cross lines. No beginning-of-line token is used, so the first token of a line is predicted from the empty context, P(w) = C(w) / N, and later tokens use only as much history as the line has, up to n - 1 tokens. The estimate is the raw count ratio C(context, w) / C(context). There is no smoothing.
+
+Dev perplexity, all seven cleaned dev files:
+
+order 2: +∞
+order 3: +∞
+order 4: +∞
+order 5: +∞
+
+The training data has 24,571,928 scored tokens, EOS included. Every order still assigns probability 0 to at least one dev token, and one zero factor makes the product over the dev set zero, so perplexity is infinite.
+
+For order 2 the first zero is the bigram (15333, 2376), the pieces " 29" and " آ". That pair occurs in the dev text and never occurs in the training counts, so P(" آ" | " 29") = 0.
+
+For orders 3, 4, and 5 the first zero is the same trigram, (1912, 12896, 1375), the pieces "29", " مارس", and " أو". It is the third token of a dev line, so even the order-4 and order-5 models are only conditioning on the two tokens of history that exist there. The trigram is absent from training, so that conditional probability is 0. A larger order does not remove the zero: the shorter history is already unseen, and an unsmoothed model has no backoff and no reserved mass for novel n-grams.
+
+Part 3.2 add-alpha smoothing
+
+With add-alpha smoothing the same counts are turned into
+
+P(w | context) = (C(context, w) + alpha) / (C(context) + alpha * V),
+
+where V = 50,001 is the 50,000 BPE tokens plus EOS. An unseen token keeps probability alpha / (C(context) + alpha * V) instead of zero, so dev perplexity is finite.
+
+Alpha was tuned on the full cleaned dev set. Orders 2, 3, 4, and 5 were each scored on a log grid from 1e-7 to 1, and order 2 was then searched in steps of 0.0002 from 0.001 to 0.008. The minimum is order 2 with alpha = 0.004, dev perplexity 860.018. The neighbors 0.0038 and 0.0042 are 860.054 and 860.241, so the bottom of the curve is flat.
+
+Longer contexts are worse under this smoother, not better. At the best alpha for each order, dev perplexity is about 860 for order 2, about 4,520 for order 3, about 13,900 for order 4, and about 21,200 for order 5. Most long contexts occur once or not at all, and alpha * V is hundreds of counts when alpha is large enough to cover novel events, so the extra history is washed out. A bigram still has enough repeated counts that a small alpha fixes the zeros without flattening the distribution.
+
+Part 3.3 selection
+
+Bits per character on the dev set is (T / N_chars) * log2(perplexity), with T = 2,491,425 scored tokens (one EOS per line included) and N_chars = 7,516,387 characters in the cleaned dev text. T and N_chars do not depend on n or alpha, so the ranking by perplexity and the ranking by bits per character are the same.
+
+The submitted model is the minimum: order 2, alpha = 0.004, no BOS token, vocabulary size 50,001. Dev perplexity is 860.018 and dev bits per character is 3.231. part3.py writes that model to artifacts/part3/model.json.gz.
+
+Orders 3–5 lose because add-alpha has no backoff. A context that was seen once gets a denominator of about 1 + alpha * 50,001, so the longer gram is close to uniform over the whole vocabulary. Bigram counts are dense enough that alpha = 0.004 removes the zeros (the unsmoothed dev perplexity was infinite) without drowning the counts that were actually observed.
+
+Dev results for every (n, alpha) that was scored. Perplexity is token-level; bpc is bits per character.
+
+n = 2
+alpha      perplexity    bpc
+1e-7         5692.293   4.135
+3e-7         4548.173   4.028
+1e-6         3556.819   3.910
+3e-6         2842.429   3.803
+1e-5         2224.269   3.686
+3e-5         1780.693   3.579
+0.0001       1401.989   3.465
+0.0003       1141.303   3.367
+0.001         946.413   3.277
+0.0012        925.847   3.267
+0.0014        910.461   3.259
+0.0016        898.666   3.252
+0.0018        889.479   3.247
+0.002         882.254   3.243
+0.0022        876.547   3.240
+0.0024        872.042   3.238
+0.0026        868.504   3.236
+0.0028        865.759   3.234
+0.003         863.670   3.233
+0.0032        862.132   3.232
+0.0034        861.060   3.232
+0.0036        860.385   3.231
+0.0038        860.054   3.231
+0.004         860.018   3.231
+0.0042        860.241   3.231
+0.0044        860.691   3.232
+0.0046        861.339   3.232
+0.0048        862.164   3.232
+0.005         863.144   3.233
+0.0052        864.264   3.234
+0.0054        865.508   3.234
+0.0056        866.864   3.235
+0.0058        868.319   3.236
+0.006         869.865   3.237
+0.0062        871.492   3.237
+0.0064        873.192   3.238
+0.0066        874.960   3.239
+0.0068        876.787   3.240
+0.007         878.670   3.241
+0.0072        880.603   3.243
+0.0074        882.582   3.244
+0.0076        884.602   3.245
+0.0078        886.661   3.246
+0.008         888.754   3.247
+0.01          911.063   3.259
+0.03         1147.856   3.369
+0.1          1811.038   3.587
+0.3          3176.392   3.856
+1            6335.352   4.186
+
+n = 3
+alpha      perplexity    bpc
+1e-7        68208.234   5.323
+3e-7        42315.917   5.094
+1e-6        25175.160   4.846
+3e-6        15837.919   4.624
+1e-5         9835.281   4.397
+3e-5         6783.601   4.219
+0.0001       5086.730   4.081
+0.0003       4519.538   4.025
+0.001        4714.289   4.045
+0.003        5604.506   4.128
+0.01         7440.344   4.263
+0.03        10048.982   4.407
+0.1         14188.467   4.572
+0.3         19324.068   4.719
+1           26189.047   4.865
+
+n = 4
+alpha      perplexity    bpc
+1e-7        34243.977   4.993
+3e-7        28345.782   4.903
+1e-6        23115.154   4.805
+3e-6        19351.255   4.720
+1e-5        16321.913   4.639
+3e-5        14620.542   4.586
+0.0001      13916.016   4.562
+0.0003      14208.884   4.572
+0.001       15385.509   4.611
+0.003       17122.558   4.662
+0.01        19686.487   4.728
+0.03        22628.084   4.795
+0.1         26519.504   4.871
+0.3         30581.425   4.939
+1           35166.106   5.006
+
+n = 5
+alpha      perplexity    bpc
+1e-7        30593.604   4.939
+3e-7        28198.329   4.900
+1e-6        25831.611   4.858
+3e-6        23952.071   4.822
+1e-5        22334.149   4.789
+3e-5        21444.767   4.769
+0.0001      21239.143   4.765
+0.0003      21708.066   4.775
+0.001       22817.436   4.799
+0.003       24287.727   4.829
+0.01        26359.840   4.868
+0.03        28663.751   4.908
+0.1         31614.804   4.955
+0.3         34591.066   4.998
+1           37851.599   5.041
+
+Part 3.4 analysis
+
+The model is the one trained on all seven languages together. For each language's own cleaned dev.txt, and for each order n from 2 to 5, alpha was tuned on that file and the best token perplexity was kept. The curves are in artifacts/part3/perplexity_vs_n.svg. The y-axis is logarithmic.
+
+(a) Every language has the same shape. Perplexity is lowest at n = 2 and rises at every larger order. From bigrams to trigrams it jumps by about four to six times, and by n = 5 it is roughly twenty to forty times the bigram value. A longer history does not help under add-alpha. The extra context is usually new: the share of dev tokens whose n-gram was never seen in training is about 16–26% at n = 2, 56–71% at n = 3, and 80–88% at n = 5. Those predictions are carried by the smoothing term, which is close to uniform over 50,001 tokens, so perplexity climbs toward the size of the vocabulary.
+
+The languages differ in height, not in the direction of the curve. At n = 2 the best perplexities are Russian 534, Hungarian 622, Finnish 665, Vietnamese 732, Arabic 798, German 854, and Mandarin 1,495. Mandarin stays the top curve through n = 5 (26,208). About 26% of its bigrams are unseen, against about 17% for Finnish, Hungarian, and Russian, and 71% of its trigrams are unseen. Its BPE pieces are short, and many of them do not repeat as pairs, so the next token is harder to pin down from one preceding token.
+
+Hungarian, Russian, and Finnish sit lowest, and Hungarian still has the smallest unseen rate at n = 5 (80%, against 88% for Arabic). Repeated word-internal pieces, including suffixes, show up as reused tokens. That advantage is real and small. It does not bend the curve downward: even Hungarian trigrams are worse than Hungarian bigrams (2,363 against 622). Vietnamese, which is isolating, tracks the alphabetic languages rather than Mandarin. After BPE, what matters for these curves is how often a token sequence repeats, which follows the spelling as much as the morphology.
+
+The curves also draw together as n grows. At n = 2 Mandarin is about 2.8 times Russian; at n = 5 it is about 1.6 times Hungarian, the lowest curve there. Once most contexts are unseen, every language is scored by nearly the same fallback and the linguistic differences shrink.
+
+Smoothing is already required at n = 2, because an unsmoothed model is infinite as soon as one dev n-gram is missing, and every language has some. It is most important at the largest n. That is where 80% or more of the predictions have a zero count, so the tuned alpha, not the training counts, is what produces the probability. The tuned alpha itself shrinks with n (about 0.002–0.008 for bigrams, 0.0003 for trigrams, and about 0.0001 for orders 4 and 5). A larger alpha would flatten the few long grams that were seen. The smaller one does not make those orders good; it only limits how flat they get.
+
+(b) A larger BPE vocabulary makes smoothing more important. The training text is fixed, so more token types means the same counts are spread over more n-grams. Each one is rarer, and a dev token is more likely to land on an n-gram that never occurred. Maximum likelihood is then infinite. Add-alpha stays defined, but its denominator contains alpha times V, so a bigger vocabulary also makes the smoothing term larger relative to the observed counts. A small character vocabulary repeats trigrams often enough that smoothing is a minor correction. At V = 50,000 the correction is what keeps bigram probabilities finite, and by n = 4 or 5 it is most of the probability. Byte-level BPE still has no unknown byte, but the larger set of learned pieces creates rare combinations, and those combinations are exactly what the smoother has to cover.
