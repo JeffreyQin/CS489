@@ -197,20 +197,13 @@ def write_plot(path, rows):
         'text-anchor="middle" font-family="sans-serif" font-size="24">'
         "vocabulary size</text>"
     )
-    _best_algorithm, best_size, best_bpc = min(
-        (
-            (algorithm, vocab_size, rows[(algorithm, vocab_size)][0])
-            for algorithm, _name, _color in ALGORITHMS
-            for vocab_size in VOCAB_SIZES
-        ),
-        key=lambda item: item[2],
-    )
-    best_x = x_of(best_size)
-    best_y = y_of(best_bpc)
-    parts.append(
-        f'<circle cx="{best_x:.1f}" cy="{best_y:.1f}" r="8" fill="none" '
-        'stroke="#e31a1c" stroke-width="2"/>'
-    )
+    for algorithm, _name, _color in ALGORITHMS:
+        best_size = min(VOCAB_SIZES, key=lambda size: rows[(algorithm, size)][0])
+        best_bpc = rows[(algorithm, best_size)][0]
+        parts.append(
+            f'<circle cx="{x_of(best_size):.1f}" cy="{y_of(best_bpc):.1f}" r="8" '
+            'fill="none" stroke="#e31a1c" stroke-width="2"/>'
+        )
     legend_y = 660
     for index, (_algorithm, name, color) in enumerate(ALGORITHMS):
         x = 250 + index * 270
