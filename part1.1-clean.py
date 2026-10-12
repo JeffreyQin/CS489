@@ -1,3 +1,13 @@
+"""
+This file was written with assistance from generative AI. Uses include
+    - Code for argument parsing and file path handling
+    - Implementation of proper regex for pattern matching for all cleaning steps
+    - Advanced logic for file link and table wrapper removal
+    - Scan dev.txt files and suggest new cleaning steps on top of ones I had
+    - Code proofreading and improvement
+"""
+
+
 import os
 import re
 import html
@@ -161,7 +171,6 @@ def resolve_chinese_variants(text):
 
 
 def clean_text(text):
-    """Apply every cleaning step to one file's text."""
     # remove wiki tables
     # {|...|}
     text = drop_tables(text)
@@ -237,7 +246,6 @@ def clean_text(text):
 
 
 def main():
-    """Clean every file under the input directory."""
     parser = argparse.ArgumentParser()
     parser.add_argument('--input', type=str, required=True)
     parser.add_argument('--output', type=str, required=True)

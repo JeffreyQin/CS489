@@ -1,16 +1,3 @@
-"""Score saved n-gram counts on each language's dev file.
-
-This script only loads the count files written by part3.py and applies each
-alpha at scoring time. The plotted
-point at each order is the lowest perplexity among the alphas.
-
-    uv run python part3_analysis/eval_languages.py \
-        --input artifacts/part1/cleaned \
-        --bpe artifacts/part1/bpe/ \
-        --counts artifacts/part3/counts \
-        --output artifacts/part3/analysis
-"""
-
 import argparse
 import math
 import shutil
@@ -139,7 +126,7 @@ def _find_chrome():
 
 
 def _write_png(svg_text, path):
-    """Rasterize the chart SVG to a PNG file."""
+    """Rasterize the chart SVG when a converter is installed."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
@@ -147,28 +134,32 @@ def _write_png(svg_text, path):
         rendered = Path(tmp) / "chart.png"
         svg_path.write_text(svg_text, encoding="utf-8")
         if shutil.which("rsvg-convert"):
-            subprocess.run(
-                ["rsvg-convert", "-o", str(rendered), str(svg_path)],
-                check=True,
-            )
+            command = ["rsvg-convert", "-o", str(rendered), str(svg_path)]
         else:
             chrome = _find_chrome()
             if chrome is None:
-                raise RuntimeError("writing the PNG needs rsvg-convert or Chrome")
+                return False
+            command = [
+                chrome,
+                "--headless",
+                "--disable-gpu",
+                "--window-size=1280,700",
+                f"--screenshot={rendered.resolve()}",
+                svg_path.resolve().as_uri(),
+            ]
+        try:
             subprocess.run(
-                [
-                    chrome,
-                    "--headless",
-                    "--disable-gpu",
-                    "--window-size=1280,700",
-                    f"--screenshot={rendered.resolve()}",
-                    svg_path.resolve().as_uri(),
-                ],
+                command,
                 check=True,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
+        except (OSError, subprocess.CalledProcessError):
+            return False
+        if not rendered.is_file():
+            return False
         path.write_bytes(rendered.read_bytes())
+    return True
 
 
 def write_plot(path, best_rows, languages):
@@ -184,9 +175,11 @@ def write_plot(path, best_rows, languages):
     log_max += pad
 
     def x_of(order):
+        """Return the horizontal position of an n-gram order."""
         return left + (order - 2) / 3 * panel_w
 
     def y_of(perplexity):
+        """Return the vertical position of a perplexity on the log axis."""
         fraction = (math.log10(perplexity) - log_min) / (log_max - log_min)
         return top + panel_h - fraction * panel_h
 
@@ -254,19 +247,74 @@ def write_plot(path, best_rows, languages):
             f'font-size="24">{name}</text>'
         )
     parts.append("</svg>")
-    _write_png("\n".join(parts), path)
+    svg_text = "\n".join(parts)
+    svg_path = Path(path).with_suffix(".svg")
+    svg_path.parent.mkdir(parents=True, exist_ok=True)
+    svg_path.write_text(svg_text, encoding="utf-8")
+    png_path = svg_path.with_suffix(".png")
+    if _write_png(svg_text, png_path):
+        return svg_path, png_path
+    return svg_path, None
+
+
+def read_table(path):
+    """Read a perplexity table written by this script."""
+    rows = []
+    for line in Path(path).read_text(encoding="utf-8").splitlines()[1:]:
+        language, order, alpha, perplexity, bpc, tokens, chars = line.split("\t")
+        rows.append(
+            {
+                "language": language,
+                "order": int(order),
+                "alpha": alpha,
+                "perplexity": math.inf if perplexity == "inf" else float(perplexity),
+                "bpc": math.inf if bpc == "inf" else float(bpc),
+                "tokens": int(tokens),
+                "chars": int(chars),
+            }
+        )
+    return rows
+
+
+def best_by_order(rows, languages):
+    """Keep the lowest perplexity at each order."""
+    best_rows = []
+    for language in languages:
+        orders = sorted({row["order"] for row in rows if row["language"] == language})
+        for order in orders:
+            group = [
+                row
+                for row in rows
+                if row["language"] == language and row["order"] == order
+            ]
+            best_rows.append(min(group, key=lambda row: row["perplexity"]))
+    return best_rows
 
 
 def main():
     """Load one count file per order and score every alpha on each language."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", type=str, required=True)
-    parser.add_argument("--bpe", type=str, required=True)
-    parser.add_argument("--counts", type=str, required=True)
+    parser.add_argument("--input", type=str)
+    parser.add_argument("--bpe", type=str)
+    parser.add_argument("--counts", type=str)
     parser.add_argument("--output", type=str, required=True)
     parser.add_argument("--language", nargs="+", default=DEFAULT_LANGUAGES)
     parser.add_argument("--alpha", nargs="+", default=DEFAULT_ALPHAS)
+    parser.add_argument("--tsv", type=str)
     args = parser.parse_args()
+    if args.tsv:
+        rows = read_table(args.tsv)
+        languages = [
+            language
+            for language in args.language
+            if any(row["language"] == language for row in rows)
+        ]
+        if not languages:
+            parser.error(f"{args.tsv} has none of the requested languages")
+        finish_plot(Path(args.output), rows, languages)
+        return
+    if not args.input or not args.bpe or not args.counts:
+        parser.error("scoring requires --input, --bpe, and --counts")
 
     encode_line, merge_of, vocab = load_encoder(args.bpe)
     eos_id = len(vocab)
@@ -322,26 +370,26 @@ def main():
 
     output = Path(args.output)
     table_path = output / "perplexity_by_language.tsv"
-    plot_path = output / "perplexity_vs_n.png"
     write_table(table_path, rows)
-    best_rows = []
-    for language in args.language:
-        for order in ORDERS:
-            group = [
-                row
-                for row in rows
-                if row["language"] == language and row["order"] == order
-            ]
-            best = min(group, key=lambda row: row["perplexity"])
-            best_rows.append(best)
-            print(
-                f"{language} order={order} best alpha={best['alpha']} "
-                f"dev perplexity={best['perplexity']:.6f}",
-                file=sys.stderr,
-            )
-    write_plot(plot_path, best_rows, args.language)
     print(f"wrote {table_path}", file=sys.stderr)
-    print(f"wrote {plot_path}", file=sys.stderr)
+    finish_plot(output, rows, args.language)
+
+
+def finish_plot(output, rows, languages):
+    """Print the best alpha at each order and write the chart."""
+    best_rows = best_by_order(rows, languages)
+    for row in best_rows:
+        print(
+            f"{row['language']} order={row['order']} best alpha={row['alpha']} "
+            f"dev perplexity={row['perplexity']:.6f}",
+            file=sys.stderr,
+        )
+    svg_path, png_path = write_plot(output / "perplexity_vs_n.png", best_rows, languages)
+    print(f"wrote {svg_path}", file=sys.stderr)
+    if png_path is None:
+        print("left the chart as SVG; this machine has no PNG converter", file=sys.stderr)
+    else:
+        print(f"wrote {png_path}", file=sys.stderr)
 
 
 if __name__ == "__main__":

@@ -1,9 +1,16 @@
+"""
+This file was written with assistance from generative AI. Uses include
+    - Code for argument parsing, file path handling, and vocabulary loading
+    - Code proofreading and improvement
+"""
+
+
 import argparse
 from pathlib import Path
 
 
 def load_vocab(bpe_dir):
-    """Load each token's bytes from bpe_vocab.txt."""
+    """Load token bytes from bpe_vocab.txt."""
     vocab_path = Path(bpe_dir) / "bpe_vocab.txt"
     return [
         bytes.fromhex(line)

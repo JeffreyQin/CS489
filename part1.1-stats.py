@@ -1,3 +1,11 @@
+"""
+This file was written with assistance from generative AI. Uses include
+    - Code for argument parsing and file path handling
+    - syntax for byte counting
+    - Code proofreading and improvement
+"""
+
+
 import os
 import argparse
 from pathlib import Path

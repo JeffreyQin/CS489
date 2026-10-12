@@ -1,3 +1,12 @@
+"""
+This file was written with assistance from generative AI. Uses include
+    - Starter code for the loading, encoding, and decoding process for each of the three tokenizers
+      (BPE, SentencePiece, WordPiece (testing)) used to optimize bits-per-character
+    - Assistance on code proofreading and improvements
+"""
+
+
+
 import argparse
 import json
 import shutil
@@ -50,20 +59,19 @@ def copy_tokenizer(source, dest, algorithm):
             if child.is_file():
                 child.unlink()
     dest.mkdir(parents=True, exist_ok=True)
-    if algorithm == "bpe":
-        names = ("bpe_vocab.txt", "bpe_merges.txt")
-    elif algorithm == "wordpiece":
-        names = ("wordpiece_vocab.txt",)
-    else:
-        names = ("unigram.model",)
+    names = {
+        "bpe": ("bpe_vocab.txt", "bpe_merges.txt"),
+        "wordpiece": ("wordpiece_vocab.txt",),
+        "unigram": ("unigram.model",),
+    }[algorithm]
     for name in names:
         src = source / name
         if not src.is_file():
             raise FileNotFoundError(f"missing {src}")
         shutil.copy2(src, dest / name)
-    extra_name = "unigram.vocab" if algorithm == "unigram" else "wordpiece_merges.txt"
-    extra = source / extra_name
-    if algorithm in ("unigram", "wordpiece") and extra.is_file():
+    extra_name = {"unigram": "unigram.vocab", "wordpiece": "wordpiece_merges.txt"}.get(algorithm)
+    extra = source / extra_name if extra_name else None
+    if extra is not None and extra.is_file():
         shutil.copy2(extra, dest / extra_name)
 
 
@@ -102,27 +110,7 @@ def write_config(output_dir, vocab_size, algorithm, source):
     """Add the tokenizer section to config.json."""
     output_dir = Path(output_dir)
     run_config = json.loads((output_dir / "run_config.json").read_text(encoding="utf-8"))
-    if algorithm == "bpe":
-        settings = {
-            "vocab_size": vocab_size,
-            "byte_level": True,
-            "merges_cross_newlines": False,
-            "source": str(source),
-        }
-    elif algorithm == "wordpiece":
-        settings = {
-            "vocab_size": vocab_size,
-            "byte_level": True,
-            "merges_cross_newlines": False,
-            "score": "count(pair) / (count(left) * count(right))",
-            "min_pair_count": 50,
-            "character_min_freq": 50,
-            "symbols": "bytes plus multibyte characters that occur at least 50 times",
-            "word_split": "space and tab",
-            "encode": "longest_match",
-            "source": str(source),
-        }
-    else:
+    if algorithm == "unigram":
         settings = {
             "vocab_size": vocab_size,
             "model_type": "unigram",
@@ -130,6 +118,24 @@ def write_config(output_dir, vocab_size, algorithm, source):
             "normalization": "identity",
             "source": str(source),
         }
+    else:
+        settings = {
+            "vocab_size": vocab_size,
+            "byte_level": True,
+            "merges_cross_newlines": False,
+        }
+        if algorithm == "wordpiece":
+            settings.update(
+                {
+                    "score": "count(pair) / (count(left) * count(right))",
+                    "min_pair_count": 50,
+                    "character_min_freq": 50,
+                    "symbols": "bytes plus multibyte characters that occur at least 50 times",
+                    "word_split": "space and tab",
+                    "encode": "longest_match",
+                }
+            )
+        settings["source"] = str(source)
     run_config["tokenizer"] = {"algorithm": algorithm, "settings": settings}
     (output_dir / "config.json").write_text(
         json.dumps(run_config, indent=2) + "\n",
@@ -138,7 +144,7 @@ def write_config(output_dir, vocab_size, algorithm, source):
 
 
 def main():
-    """Load a saved tokenizer, train the fixed Transformer, and write the Part 2 artifacts."""
+    """Load a saved tokenizer, train the fixed Transformer, and write the artifacts."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=str, required=True)
     parser.add_argument("--output", type=str, required=True)
@@ -159,8 +165,7 @@ def main():
         args.input, args.output, args.vocab_size, algorithm, args.tokenizer
     )
 
-    # Imported here so preparing the corpus does not load the training stack
-    # until the token files exist.
+    # import after the corpus exists so training is not loaded earlier.
     from part2_train import train
 
     metrics = train(

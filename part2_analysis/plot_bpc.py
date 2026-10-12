@@ -1,12 +1,3 @@
-"""Plot dev bits per character against vocabulary size.
-
-The chart uses the same SVG layout as part1.5-analysis.py. The twelve scores
-are the finished Transformer runs. Pass --runs to read dev_metrics.json
-instead.
-
-    uv run python part2_analysis/plot_bpc.py --output artifacts/part2/analysis
-"""
-
 import argparse
 import json
 import shutil
@@ -22,7 +13,6 @@ ALGORITHMS = [
     ("bpe", "BPE", "#0072B2"),
     ("unigram", "Unigram", "#009E73"),
 ]
-# Final dev evaluation. dev_chars is 6751325 in every run.
 RECORDED = {
     ("wordpiece", 5000): (3.0451, 2.1103, 6752637, 6751325),
     ("wordpiece", 10000): (3.0441, 2.1446, 6642408, 6751325),

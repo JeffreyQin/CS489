@@ -7,9 +7,6 @@ from pathlib import Path
 from data import iter_split_files
 
 
-# One past the BPE vocabulary. Appended to every line and scored.
-# Lines are tokenized on their own, so a newline is not a token and
-# n-grams stop at the line boundary.
 def load_encoder(bpe_dir):
     """Load the byte-level BPE encoder, merges, and vocabulary."""
     path = Path(__file__).resolve().parent / "part1.3-encode.py"
@@ -45,7 +42,6 @@ def tokenize_line(line, encode_line, merge_of, eos_id):
 
 def pack(token_ids):
     """Pack token ids into one integer key."""
-    # Token ids used here fit in 16 bits (BPE ids plus EOS).
     key = 0
     for token_id in token_ids:
         key = (key << 16) | token_id
@@ -70,10 +66,6 @@ def train_counts(lines, order):
 
 def dev_perplexity(lines, order, counts, total, alpha=0.0, vocab_size=None):
     """Score dev perplexity, with optional add-alpha smoothing."""
-    # Unsmoothed: P(w | ctx) = C(ctx + w) / C(ctx). An unseen gram has
-    # probability 0, and the corpus perplexity is then infinite.
-    # Add-alpha: P(w | ctx) = (C(ctx + w) + alpha) / (C(ctx) + alpha * V),
-    # with V the number of tokens the model can emit.
     if alpha < 0:
         raise ValueError("alpha must be >= 0")
     if alpha > 0 and vocab_size is None:
@@ -150,7 +142,6 @@ def main():
 
     encode_line, merge_of, vocab = load_encoder(args.bpe)
     eos_id = len(vocab)
-    # BPE ids plus EOS. No beginning-of-line token is used.
     vocab_size = eos_id + 1
 
     def token_lines(split):

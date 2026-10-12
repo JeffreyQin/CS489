@@ -1,10 +1,18 @@
+"""
+This file was written with assistance from generative AI. Uses include
+    - Code for argument parsing and file path handling
+    - Implementation of helper functions like load_merges and encode
+    - Assistance on the linked-list implementation of encode_line
+    - Code proofreading and improvements
+"""
+
 import argparse
 import heapq
 from pathlib import Path
 
 
 def load_merges(bpe_dir):
-    """Load the vocabulary and the learned merge map."""
+    """Load vocabulary and learned merge mapping"""
     bpe_dir = Path(bpe_dir)
     vocab = [
         bytes.fromhex(line)
@@ -21,20 +29,27 @@ def load_merges(bpe_dir):
 
 
 def encode_line(data, merge_of):
-    """Apply the learned merges to one line of bytes."""
-    # Lowest merge id is the earliest rule. Position breaks ties left to right,
-    # which is how the trainer applied one rule.
+    """
+    Encode a line of bytes by applying learned merges
+    Prioritize merges by lowest merge id, then left to right position to break ties
+    """
+
     n = len(data)
     if n == 0:
         return []
     if n == 1:
         return [data[0]]
 
+    # each live token points at its neighbors (-1 for placeholder)
     ids = list(data)
-    nxt = list(range(1, n))
-    nxt.append(-1)
-    prv = list(range(-1, n - 1))
+    next = list(range(1, n))
+    next.append(-1)
+    prev = list(range(-1, n - 1))
+
+    # 1 means the token is still in the line (alive). 0 means it was removed (dead).
     alive = bytearray(b"\x01") * n
+
+    # queue every pair that has a learned merge, as (merged id, position).
     heap = []
     for i in range(n - 1):
         merged = merge_of.get((ids[i], ids[i + 1]))
@@ -43,55 +58,57 @@ def encode_line(data, merge_of):
 
     while heap:
         merged, i = heapq.heappop(heap)
-        if not alive[i]:
+
+        j = next[i]
+        # queued pair is no longer neighboring live tokens.
+        if not alive[i] or j < 0 or merge_of.get((ids[i], ids[j])) != merged:
             continue
-        j = nxt[i]
-        if j < 0 or not alive[j]:
-            continue
-        if merge_of.get((ids[i], ids[j])) != merged:
-            continue
+
+        # left token stays alive and holds the merged id, right token is marked as dead
         ids[i] = merged
         alive[j] = 0
-        k = nxt[j]
-        nxt[i] = k
+        k = next[j]
+        next[i] = k
         if k >= 0:
-            prv[k] = i
-            nxt_merge = merge_of.get((merged, ids[k]))
-            if nxt_merge is not None:
-                heapq.heappush(heap, (nxt_merge, i))
-        p = prv[i]
+            prev[k] = i
+            next_merge = merge_of.get((merged, ids[k]))
+            if next_merge is not None:
+                heapq.heappush(heap, (next_merge, i))
+
+        # left neighbor forms new pair with merged token.
+        p = prev[i]
         if p >= 0 and alive[p]:
             prev_merge = merge_of.get((ids[p], merged))
             if prev_merge is not None:
                 heapq.heappush(heap, (prev_merge, p))
 
+    # read tokens that are still linked together
     out = []
     i = 0
     while i >= 0:
         out.append(ids[i])
-        i = nxt[i]
+        i = next[i]
     return out
 
 
 def encode(data, merge_of):
-    """Encode bytes, keeping each newline as token 10."""
-    # Newline is byte 10 and was never merged, so it stays its own token.
-    out = []
+    """Encode corpus by encoding each line separately and appending the newline token (byte 10)"""
+
+    encoded = []
     start = 0
     for i, byte in enumerate(data):
         if byte != 10:
             continue
         if i > start:
-            out.extend(encode_line(data[start:i], merge_of))
-        out.append(10)
+            encoded.extend(encode_line(data[start:i], merge_of))
+        encoded.append(10)
         start = i + 1
     if start < len(data):
-        out.extend(encode_line(data[start:], merge_of))
-    return out
+        encoded.extend(encode_line(data[start:], merge_of))
+    return encoded
 
 
 def main():
-    """Encode one file into one token id per line."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=str, required=True)
     parser.add_argument("--bpe", type=str, required=True)

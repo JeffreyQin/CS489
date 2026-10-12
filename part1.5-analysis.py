@@ -1,3 +1,12 @@
+"""
+This file was written with assistance from generative AI. Uses include
+    - Code for argument parsing and file path handling
+    - Implementation of helper functions like load_script, load_dev_texts, character_counts, and character_coverage
+    - Starter code for functions (measure_bpe, measure_unigram) that train models at various vocabulary sizes, perform scoring and result recording
+    - All implementation for plot and table generation
+    - Code proofreading and improvements
+"""
+
 import argparse
 import importlib.util
 import os
@@ -14,17 +23,18 @@ from data import iter_split_files
 
 
 VOCAB_SIZES = [5000, 10000, 20000, 50000]
-# unk plus one piece for every byte. Newlines and leftover characters use these.
+
+# unk plus one piece per byte.
 META_PIECES = 257
 
 LANGUAGES = [
-    ("fi", "Finnish", "agglutinative", "#0072B2"),
-    ("hu", "Hungarian", "agglutinative", "#56B4E9"),
-    ("de", "German", "fusional", "#E69F00"),
-    ("ru", "Russian", "fusional", "#D55E00"),
-    ("ar", "Arabic", "fusional", "#CC79A7"),
-    ("zh", "Mandarin", "isolating", "#009E73"),
-    ("vi", "Vietnamese", "isolating", "#000000"),
+    ("fi", "Finnish", "#0072B2"),
+    ("hu", "Hungarian", "#56B4E9"),
+    ("de", "German", "#E69F00"),
+    ("ru", "Russian", "#D55E00"),
+    ("ar", "Arabic", "#CC79A7"),
+    ("zh", "Mandarin", "#009E73"),
+    ("vi", "Vietnamese", "#000000"),
 ]
 
 
@@ -38,8 +48,7 @@ def load_script(filename):
 
 
 def character_counts(input_dir):
-    """Count characters in the training lines, with spaces marked."""
-    # SentencePiece splits on newlines and escapes a normal space as U+2581.
+    """Count training characters. Spaces are stored as U+2581."""
     counts = Counter()
     for path in iter_split_files(input_dir, "train"):
         for line in path.read_text(encoding="utf-8").split("\n"):
@@ -48,10 +57,7 @@ def character_counts(input_dir):
 
 
 def character_coverage(counts, vocab_size, margin):
-    """Return the fraction of characters that fit under a vocabulary cap."""
-    # A shared vocabulary cannot hold all 13k characters and still have room
-    # for multi-character pieces. Keep the most frequent characters that fit,
-    # and let byte fallback encode the rest.
+    """Fraction of characters that fit under the vocabulary cap."""
     cap = vocab_size - META_PIECES - margin
     if cap < 1:
         raise ValueError(f"vocab size {vocab_size} is too small")
@@ -64,8 +70,7 @@ def character_coverage(counts, vocab_size, margin):
 
 
 def bpe_merge_map(merges, vocab_size):
-    """Return the first V - 256 merges as a pair-to-id map."""
-    # A BPE model of size V is the first V - 256 merges of the full run.
+    """Map the first V - 256 merges to token ids."""
     return {
         pair: 256 + index
         for index, pair in enumerate(merges[: vocab_size - 256])
@@ -77,10 +82,30 @@ def load_dev_texts(input_dir):
     texts = {}
     for path in iter_split_files(input_dir, "dev"):
         texts[path.parent.name] = path.read_text(encoding="utf-8")
-    missing = [code for code, _, _, _ in LANGUAGES if code not in texts]
+    missing = [code for code, _, _ in LANGUAGES if code not in texts]
     if missing:
         raise ValueError(f"missing dev.txt for {', '.join(missing)}")
     return texts
+
+
+def write_bpe_artifacts(output_dir, vocab, merges):
+    """Write bpe_vocab.txt and bpe_merges.txt for one vocabulary size."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    with (output_dir / "bpe_vocab.txt").open("w", encoding="utf-8", newline="\n") as handle:
+        for token in vocab:
+            handle.write(token.hex() + "\n")
+    with (output_dir / "bpe_merges.txt").open("w", encoding="utf-8", newline="\n") as handle:
+        for left, right in merges:
+            handle.write(f"{vocab[left].hex()} {vocab[right].hex()}\n")
+
+
+def record(rows, code, tokenizer, vocab_size, n_tokens, n_bytes):
+    """Store one tokens-per-byte row and print it."""
+    rows.append((code, tokenizer, vocab_size, n_tokens, n_bytes))
+    print(
+        f"{tokenizer} V={vocab_size} {code} {n_tokens / n_bytes:.4f}",
+        file=sys.stderr,
+    )
 
 
 def measure_bpe(input_dir, dev_texts, encode, output_dir):
@@ -90,21 +115,17 @@ def measure_bpe(input_dir, dev_texts, encode, output_dir):
     vocab, merges = bpe.train_bpe(raw, ends, max(VOCAB_SIZES))
     rows = []
     for vocab_size in VOCAB_SIZES:
-        bpe.write_artifacts(
+        write_bpe_artifacts(
             Path(output_dir) / "bpe" / f"v{vocab_size}",
             vocab[:vocab_size],
             merges[: vocab_size - 256],
         )
         merge_of = bpe_merge_map(merges, vocab_size)
-        for code, _, _, _ in LANGUAGES:
+        for code, _, _ in LANGUAGES:
             text = dev_texts[code]
             n_bytes = len(text.encode("utf-8"))
             n_tokens = len(encode(text.encode("utf-8"), merge_of))
-            rows.append((code, "bpe", vocab_size, n_tokens, n_bytes))
-            print(
-                f"bpe V={vocab_size} {code} {n_tokens / n_bytes:.4f}",
-                file=sys.stderr,
-            )
+            record(rows, code, "bpe", vocab_size, n_tokens, n_bytes)
     return rows
 
 
@@ -148,15 +169,11 @@ def measure_unigram(input_dir, dev_texts, counts, output_dir):
             raise RuntimeError(
                 f"unigram vocab is {model.GetPieceSize()}, expected {vocab_size}"
             )
-        for code, _, _, _ in LANGUAGES:
+        for code, _, _ in LANGUAGES:
             text = dev_texts[code]
             n_bytes = len(text.encode("utf-8"))
             n_tokens = len(model.Encode(text))
-            rows.append((code, "unigram", vocab_size, n_tokens, n_bytes))
-            print(
-                f"unigram V={vocab_size} {code} {n_tokens / n_bytes:.4f}",
-                file=sys.stderr,
-            )
+            record(rows, code, "unigram", vocab_size, n_tokens, n_bytes)
     return rows
 
 
@@ -287,7 +304,7 @@ def write_plot(path, rows):
                 f'<text x="{x:.1f}" y="{top + panel_h + 28}" text-anchor="middle" '
                 f'font-family="sans-serif" font-size="16">{label}</text>'
             )
-        for code, _, _, color in LANGUAGES:
+        for code, _, color in LANGUAGES:
             points = []
             for vocab_size in VOCAB_SIZES:
                 ratio = by_key[(code, name.lower(), vocab_size)]
@@ -309,7 +326,7 @@ def write_plot(path, rows):
         )
 
     legend_y = 660
-    for index, (_, name, _, color) in enumerate(LANGUAGES):
+    for index, (_, name, color) in enumerate(LANGUAGES):
         x = 40 + index * 176
         parts.append(
             f'<line x1="{x}" y1="{legend_y}" x2="{x + 28}" y2="{legend_y}" '
