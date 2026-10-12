@@ -1,70 +1,136 @@
 import argparse
-import importlib.util
 import json
+import shutil
 import sys
 from pathlib import Path
 
 from data import load_split, write_ids
+from part2_tokenizer import load_tokenizer
 
 
-def load_script(filename):
-    path = Path(__file__).resolve().parent / filename
-    spec = importlib.util.spec_from_file_location(filename.replace(".", "_"), path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+ROOT = Path(__file__).resolve().parent
 
 
-def prepare_corpus(input_dir, output_dir, vocab_size):
-    """Train byte-level BPE at this vocabulary size and write train/dev id files.
+def saved_tokenizer_dir(algorithm, vocab_size):
+    """Return the Part-1 directory that already holds this vocabulary."""
+    if algorithm == "bpe" and vocab_size == 50000:
+        submitted = ROOT / "artifacts" / "part1" / "bpe"
+        if submitted.is_dir():
+            return submitted
+    source = ROOT / "artifacts" / "part1" / "analysis" / algorithm / f"v{vocab_size}"
+    if source.is_dir():
+        return source
+    if algorithm == "unigram" and vocab_size == 50000:
+        submitted = ROOT / "artifacts" / "part1" / "unigram"
+        if submitted.is_dir():
+            return submitted
+    raise FileNotFoundError(
+        f"no saved {algorithm} vocabulary of size {vocab_size} under artifacts/part1"
+    )
 
-    The dev text file is the exact string that was encoded, so the character
-    count used for bits-per-character matches the token stream.
-    """
+
+def tokenizer_algorithm(source):
+    """Return bpe, unigram, or wordpiece based on the files in source."""
+    source = Path(source)
+    if (source / "unigram.model").is_file():
+        return "unigram"
+    if (source / "wordpiece_vocab.txt").is_file():
+        return "wordpiece"
+    if (source / "bpe_vocab.txt").is_file() and (source / "bpe_merges.txt").is_file():
+        return "bpe"
+    raise FileNotFoundError(f"no BPE, unigram, or WordPiece tokenizer in {source}")
+
+
+def copy_tokenizer(source, dest, algorithm):
+    """Copy the saved tokenizer files into dest."""
+    source = Path(source)
+    dest = Path(dest)
+    if dest.exists():
+        for child in dest.iterdir():
+            if child.is_file():
+                child.unlink()
+    dest.mkdir(parents=True, exist_ok=True)
+    if algorithm == "bpe":
+        names = ("bpe_vocab.txt", "bpe_merges.txt")
+    elif algorithm == "wordpiece":
+        names = ("wordpiece_vocab.txt",)
+    else:
+        names = ("unigram.model",)
+    for name in names:
+        src = source / name
+        if not src.is_file():
+            raise FileNotFoundError(f"missing {src}")
+        shutil.copy2(src, dest / name)
+    extra_name = "unigram.vocab" if algorithm == "unigram" else "wordpiece_merges.txt"
+    extra = source / extra_name
+    if algorithm in ("unigram", "wordpiece") and extra.is_file():
+        shutil.copy2(extra, dest / extra_name)
+
+
+def prepare_corpus(input_dir, output_dir, vocab_size, algorithm, tokenizer_path):
+    """Copy a saved tokenizer, encode train and dev, and write the id files."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    source = Path(tokenizer_path) if tokenizer_path else saved_tokenizer_dir(algorithm, vocab_size)
+    if not source.is_dir():
+        raise FileNotFoundError(f"tokenizer directory does not exist: {source}")
     tokenizer_dir = output_dir / "tokenizer"
+    copy_tokenizer(source, tokenizer_dir, algorithm)
 
-    bpe = load_script("part1.2-bpe.py")
-    raw, ends = bpe.load_corpus(input_dir)
-    vocab, merges = bpe.train_bpe(raw, ends, vocab_size)
-    if len(vocab) != vocab_size:
-        raise RuntimeError(f"BPE produced {len(vocab)} tokens, expected {vocab_size}")
-    bpe.write_artifacts(tokenizer_dir, vocab, merges)
+    tokenizer = load_tokenizer(str(tokenizer_dir))
+    if tokenizer.vocab_size != vocab_size:
+        raise RuntimeError(
+            f"{algorithm} vocabulary has {tokenizer.vocab_size} pieces, expected {vocab_size}"
+        )
 
-    encoder = load_script("part1.3-encode.py")
-    merge_of = encoder.load_merges(tokenizer_dir)
     train_text = load_split(input_dir, "train")
     dev_text = load_split(input_dir, "dev")
     dev_path = output_dir / "dev.txt"
     dev_path.write_text(dev_text, encoding="utf-8", newline="\n")
-
-    train_ids = encoder.encode(train_text.encode("utf-8"), merge_of)
-    dev_ids = encoder.encode(dev_text.encode("utf-8"), merge_of)
-    if train_ids and max(train_ids) >= vocab_size:
-        raise RuntimeError("train token id is outside the vocabulary")
-    if dev_ids and max(dev_ids) >= vocab_size:
-        raise RuntimeError("dev token id is outside the vocabulary")
+    train_ids = tokenizer.encode(train_text)
+    dev_ids = tokenizer.encode(dev_text)
+    if tokenizer.decode(dev_ids) != dev_text:
+        raise RuntimeError("dev encoding is not lossless")
     write_ids(output_dir / "train.bin", train_ids)
     write_ids(output_dir / "dev.bin", dev_ids)
-    print(
-        f"encoded train={len(train_ids)} dev={len(dev_ids)} tokens",
-        file=sys.stderr,
-    )
-    return dev_path
+    print(f"loaded {algorithm} V={vocab_size} from {source}", file=sys.stderr)
+    print(f"encoded train={len(train_ids)} dev={len(dev_ids)} tokens", file=sys.stderr)
+    return dev_path, source
 
 
-def write_config(output_dir, vocab_size):
+def write_config(output_dir, vocab_size, algorithm, source):
+    """Add the tokenizer section to config.json."""
     output_dir = Path(output_dir)
     run_config = json.loads((output_dir / "run_config.json").read_text(encoding="utf-8"))
-    run_config["tokenizer"] = {
-        "algorithm": "bpe",
-        "settings": {
+    if algorithm == "bpe":
+        settings = {
             "vocab_size": vocab_size,
             "byte_level": True,
             "merges_cross_newlines": False,
-        },
-    }
+            "source": str(source),
+        }
+    elif algorithm == "wordpiece":
+        settings = {
+            "vocab_size": vocab_size,
+            "byte_level": True,
+            "merges_cross_newlines": False,
+            "score": "count(pair) / (count(left) * count(right))",
+            "min_pair_count": 50,
+            "character_min_freq": 50,
+            "symbols": "bytes plus multibyte characters that occur at least 50 times",
+            "word_split": "space and tab",
+            "encode": "longest_match",
+            "source": str(source),
+        }
+    else:
+        settings = {
+            "vocab_size": vocab_size,
+            "model_type": "unigram",
+            "byte_fallback": True,
+            "normalization": "identity",
+            "source": str(source),
+        }
+    run_config["tokenizer"] = {"algorithm": algorithm, "settings": settings}
     (output_dir / "config.json").write_text(
         json.dumps(run_config, indent=2) + "\n",
         encoding="utf-8",
@@ -72,15 +138,26 @@ def write_config(output_dir, vocab_size):
 
 
 def main():
+    """Load a saved tokenizer, train the fixed Transformer, and write the Part 2 artifacts."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=str, required=True)
     parser.add_argument("--output", type=str, required=True)
     parser.add_argument("--vocab-size", type=int, required=True)
+    parser.add_argument("--algorithm", choices=("bpe", "unigram", "wordpiece"), default="bpe")
+    parser.add_argument("--tokenizer", type=str, default=None)
     args = parser.parse_args()
     if args.vocab_size < 256:
         parser.error("--vocab-size must be at least 256")
 
-    dev_path = prepare_corpus(args.input, args.output, args.vocab_size)
+    algorithm = args.algorithm
+    if args.tokenizer:
+        found = tokenizer_algorithm(args.tokenizer)
+        if found != algorithm:
+            parser.error(f"{args.tokenizer} is a {found} tokenizer, not {algorithm}")
+
+    dev_path, source = prepare_corpus(
+        args.input, args.output, args.vocab_size, algorithm, args.tokenizer
+    )
 
     # Imported here so preparing the corpus does not load the training stack
     # until the token files exist.
@@ -94,12 +171,12 @@ def main():
         dev_text_path=dev_path,
     )
     metrics["vocab_size"] = args.vocab_size
-    metrics["algorithm"] = "bpe"
+    metrics["algorithm"] = algorithm
     (Path(args.output) / "dev_metrics.json").write_text(
         json.dumps(metrics, indent=2) + "\n",
         encoding="utf-8",
     )
-    write_config(args.output, args.vocab_size)
+    write_config(args.output, args.vocab_size, algorithm, source)
     if "dev_bpc" in metrics:
         print(f"dev bpc: {metrics['dev_bpc']:.4f}")
 

@@ -1,6 +1,8 @@
 import argparse
 import importlib.util
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 from collections import Counter
@@ -27,6 +29,7 @@ LANGUAGES = [
 
 
 def load_script(filename):
+    """Import a sibling script by filename."""
     path = Path(__file__).resolve().parent / filename
     spec = importlib.util.spec_from_file_location(filename.replace(".", "_"), path)
     module = importlib.util.module_from_spec(spec)
@@ -35,6 +38,7 @@ def load_script(filename):
 
 
 def character_counts(input_dir):
+    """Count characters in the training lines, with spaces marked."""
     # SentencePiece splits on newlines and escapes a normal space as U+2581.
     counts = Counter()
     for path in iter_split_files(input_dir, "train"):
@@ -44,6 +48,7 @@ def character_counts(input_dir):
 
 
 def character_coverage(counts, vocab_size, margin):
+    """Return the fraction of characters that fit under a vocabulary cap."""
     # A shared vocabulary cannot hold all 13k characters and still have room
     # for multi-character pieces. Keep the most frequent characters that fit,
     # and let byte fallback encode the rest.
@@ -59,6 +64,7 @@ def character_coverage(counts, vocab_size, margin):
 
 
 def bpe_merge_map(merges, vocab_size):
+    """Return the first V - 256 merges as a pair-to-id map."""
     # A BPE model of size V is the first V - 256 merges of the full run.
     return {
         pair: 256 + index
@@ -67,6 +73,7 @@ def bpe_merge_map(merges, vocab_size):
 
 
 def load_dev_texts(input_dir):
+    """Read each language's cleaned dev.txt."""
     texts = {}
     for path in iter_split_files(input_dir, "dev"):
         texts[path.parent.name] = path.read_text(encoding="utf-8")
@@ -76,25 +83,33 @@ def load_dev_texts(input_dir):
     return texts
 
 
-def measure_bpe(input_dir, dev_texts, encode):
+def measure_bpe(input_dir, dev_texts, encode, output_dir):
+    """Train BPE once, save each vocabulary size, and score dev."""
     bpe = load_script("part1.2-bpe.py")
     raw, ends = bpe.load_corpus(input_dir)
     vocab, merges = bpe.train_bpe(raw, ends, max(VOCAB_SIZES))
     rows = []
     for vocab_size in VOCAB_SIZES:
+        bpe.write_artifacts(
+            Path(output_dir) / "bpe" / f"v{vocab_size}",
+            vocab[:vocab_size],
+            merges[: vocab_size - 256],
+        )
         merge_of = bpe_merge_map(merges, vocab_size)
         for code, _, _, _ in LANGUAGES:
             text = dev_texts[code]
+            n_bytes = len(text.encode("utf-8"))
             n_tokens = len(encode(text.encode("utf-8"), merge_of))
-            rows.append((code, "bpe", vocab_size, n_tokens, len(text)))
+            rows.append((code, "bpe", vocab_size, n_tokens, n_bytes))
             print(
-                f"bpe V={vocab_size} {code} {n_tokens / len(text):.4f}",
+                f"bpe V={vocab_size} {code} {n_tokens / n_bytes:.4f}",
                 file=sys.stderr,
             )
     return rows
 
 
-def measure_unigram(input_dir, dev_texts, counts):
+def measure_unigram(input_dir, dev_texts, counts, output_dir):
+    """Train unigram at each size, save the model, and score dev."""
     unigram = load_script("part1.4-unigram.py")
     rows = []
     for vocab_size in VOCAB_SIZES:
@@ -107,18 +122,19 @@ def measure_unigram(input_dir, dev_texts, counts):
                 file=sys.stderr,
             )
             try:
-                with tempfile.TemporaryDirectory() as tmp:
-                    prefix = str(Path(tmp) / "unigram")
-                    with open(os.devnull, "w", encoding="utf-8") as sink:
-                        unigram.train_unigram(
-                            input_dir,
-                            prefix,
-                            vocab_size,
-                            character_coverage=coverage,
-                            logstream=sink,
-                        )
-                    model = spm.SentencePieceProcessor()
-                    model.Load(prefix + ".model")
+                model_dir = Path(output_dir) / "unigram" / f"v{vocab_size}"
+                model_dir.mkdir(parents=True, exist_ok=True)
+                prefix = str(model_dir / "unigram")
+                with open(os.devnull, "w", encoding="utf-8") as sink:
+                    unigram.train_unigram(
+                        input_dir,
+                        prefix,
+                        vocab_size,
+                        character_coverage=coverage,
+                        logstream=sink,
+                    )
+                model = spm.SentencePieceProcessor()
+                model.Load(prefix + ".model")
                 break
             except RuntimeError as error:
                 message = str(error)
@@ -134,60 +150,111 @@ def measure_unigram(input_dir, dev_texts, counts):
             )
         for code, _, _, _ in LANGUAGES:
             text = dev_texts[code]
+            n_bytes = len(text.encode("utf-8"))
             n_tokens = len(model.Encode(text))
-            rows.append((code, "unigram", vocab_size, n_tokens, len(text)))
+            rows.append((code, "unigram", vocab_size, n_tokens, n_bytes))
             print(
-                f"unigram V={vocab_size} {code} {n_tokens / len(text):.4f}",
+                f"unigram V={vocab_size} {code} {n_tokens / n_bytes:.4f}",
                 file=sys.stderr,
             )
     return rows
 
 
 def write_table(path, rows):
+    """Write compression_ratios.tsv."""
     with path.open("w", encoding="utf-8", newline="\n") as handle:
-        handle.write("language\ttokenizer\tvocab_size\ttokens\tcharacters\ttokens_per_char\n")
-        for code, tokenizer, vocab_size, n_tokens, n_chars in rows:
+        handle.write("language\ttokenizer\tvocab_size\ttokens\tbytes\ttokens_per_byte\n")
+        for code, tokenizer, vocab_size, n_tokens, n_bytes in rows:
             handle.write(
-                f"{code}\t{tokenizer}\t{vocab_size}\t{n_tokens}\t{n_chars}\t"
-                f"{n_tokens / n_chars:.6f}\n"
+                f"{code}\t{tokenizer}\t{vocab_size}\t{n_tokens}\t{n_bytes}\t"
+                f"{n_tokens / n_bytes:.6f}\n"
             )
 
 
+def _find_chrome():
+    """Return a Chrome or Chromium binary, if one is installed."""
+    names = ("google-chrome", "chromium", "chromium-browser")
+    found = [shutil.which(name) for name in names]
+    found.extend(
+        [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        ]
+    )
+    for candidate in found:
+        if candidate and Path(candidate).is_file():
+            return candidate
+    return None
+
+
+def _write_png(svg_text, path):
+    """Rasterize the chart SVG to a PNG file."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as tmp:
+        svg_path = Path(tmp) / "chart.svg"
+        rendered = Path(tmp) / "chart.png"
+        svg_path.write_text(svg_text, encoding="utf-8")
+        if shutil.which("rsvg-convert"):
+            subprocess.run(
+                ["rsvg-convert", "-o", str(rendered), str(svg_path)],
+                check=True,
+            )
+        else:
+            chrome = _find_chrome()
+            if chrome is None:
+                raise RuntimeError("writing the PNG needs rsvg-convert or Chrome")
+            subprocess.run(
+                [
+                    chrome,
+                    "--headless",
+                    "--disable-gpu",
+                    "--window-size=1280,700",
+                    f"--screenshot={rendered.resolve()}",
+                    svg_path.resolve().as_uri(),
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        path.write_bytes(rendered.read_bytes())
+
+
 def write_plot(path, rows):
+    """Write compression.png."""
     by_key = {
-        (code, tokenizer, vocab_size): n_tokens / n_chars
-        for code, tokenizer, vocab_size, n_tokens, n_chars in rows
+        (code, tokenizer, vocab_size): n_tokens / n_bytes
+        for code, tokenizer, vocab_size, n_tokens, n_bytes in rows
     }
-    y_min, y_max = 0.2, 1.0
-    y_ticks = [0.2, 0.4, 0.6, 0.8, 1.0]
-    width, height = 1080, 540
-    panel_w, panel_h = 380, 320
-    panels = (("BPE", 100), ("Unigram", 580))
-    top = 78
+    y_min, y_max = 0.1, 0.7
+    y_ticks = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
+    width, height = 1280, 700
+    panel_w, panel_h = 460, 400
+    panels = (("BPE", 150), ("Unigram", 740))
+    top = 110
 
     def x_of(vocab_size, left):
+        """Return the horizontal position of a vocabulary size."""
         index = VOCAB_SIZES.index(vocab_size)
         return left + panel_w * index / (len(VOCAB_SIZES) - 1)
 
     def y_of(ratio):
+        """Return the vertical position of a tokens-per-byte ratio."""
         return top + panel_h * (y_max - ratio) / (y_max - y_min)
 
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
         f'viewBox="0 0 {width} {height}">',
         '<rect width="100%" height="100%" fill="white"/>',
-        '<text x="540" y="26" text-anchor="middle" font-family="sans-serif" '
-        'font-size="16">Compression ratio vs vocabulary size</text>',
-        '<text x="540" y="46" text-anchor="middle" font-family="sans-serif" '
-        'font-size="12" fill="#444">tokens per character on cleaned dev.txt; '
-        "lower means fewer tokens</text>",
-        '<text x="18" y="270" text-anchor="middle" font-family="sans-serif" '
-        'font-size="12" transform="rotate(-90 18 270)">tokens / character</text>',
+        '<text x="640" y="42" text-anchor="middle" font-family="sans-serif" '
+        'font-size="26">Compression ratio (tokens per byte) v.s. vocabulary size</text>',
+        '<text x="36" y="340" text-anchor="middle" font-family="sans-serif" '
+        'font-size="18" transform="rotate(-90 36 340)">tokens / byte</text>',
     ]
     for name, left in panels:
         parts.append(
-            f'<text x="{left + panel_w / 2:.0f}" y="{top - 10}" text-anchor="middle" '
-            f'font-family="sans-serif" font-size="14">{name}</text>'
+            f'<text x="{left + panel_w / 2:.0f}" y="{top - 16}" text-anchor="middle" '
+            f'font-family="sans-serif" font-size="22">{name}</text>'
         )
         for vocab_size in VOCAB_SIZES:
             x = x_of(vocab_size, left)
@@ -202,8 +269,8 @@ def write_plot(path, rows):
                 'stroke="#eeeeee"/>'
             )
             parts.append(
-                f'<text x="{left - 8}" y="{y + 4:.1f}" text-anchor="end" '
-                f'font-family="sans-serif" font-size="11">{ratio:.1f}</text>'
+                f'<text x="{left - 12}" y="{y + 6:.1f}" text-anchor="end" '
+                f'font-family="sans-serif" font-size="16">{ratio:.1f}</text>'
             )
         parts.append(
             f'<line x1="{left}" y1="{top}" x2="{left}" y2="{top + panel_h}" '
@@ -217,8 +284,8 @@ def write_plot(path, rows):
             x = x_of(vocab_size, left)
             label = f"{vocab_size // 1000}k"
             parts.append(
-                f'<text x="{x:.1f}" y="{top + panel_h + 18}" text-anchor="middle" '
-                f'font-family="sans-serif" font-size="11">{label}</text>'
+                f'<text x="{x:.1f}" y="{top + panel_h + 28}" text-anchor="middle" '
+                f'font-family="sans-serif" font-size="16">{label}</text>'
             )
         for code, _, _, color in LANGUAGES:
             points = []
@@ -236,27 +303,28 @@ def write_plot(path, rows):
                     f'r="3.2" fill="{color}"/>'
                 )
         parts.append(
-            f'<text x="{left + panel_w / 2:.0f}" y="{top + panel_h + 38}" '
-            'text-anchor="middle" font-family="sans-serif" font-size="12">'
+            f'<text x="{left + panel_w / 2:.0f}" y="{top + panel_h + 56}" '
+            'text-anchor="middle" font-family="sans-serif" font-size="18">'
             "vocabulary size</text>"
         )
 
-    legend_y = 500
+    legend_y = 660
     for index, (_, name, _, color) in enumerate(LANGUAGES):
-        x = 70 + index * 145
+        x = 40 + index * 176
         parts.append(
-            f'<line x1="{x}" y1="{legend_y}" x2="{x + 18}" y2="{legend_y}" '
-            f'stroke="{color}" stroke-width="3"/>'
+            f'<line x1="{x}" y1="{legend_y}" x2="{x + 28}" y2="{legend_y}" '
+            f'stroke="{color}" stroke-width="4"/>'
         )
         parts.append(
-            f'<text x="{x + 24}" y="{legend_y + 4}" font-family="sans-serif" '
-            f'font-size="12">{name}</text>'
+            f'<text x="{x + 34}" y="{legend_y + 6}" font-family="sans-serif" '
+            f'font-size="18">{name}</text>'
         )
     parts.append("</svg>")
-    path.write_text("\n".join(parts) + "\n", encoding="utf-8")
+    _write_png("\n".join(parts) + "\n", path)
 
 
 def main():
+    """Sweep both tokenizers and write the table and plot."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=str, required=True)
     parser.add_argument("--output", type=str, required=True)
@@ -267,11 +335,13 @@ def main():
     dev_texts = load_dev_texts(args.input)
     encode = load_script("part1.3-encode.py").encode
 
-    rows = measure_bpe(args.input, dev_texts, encode)
-    rows.extend(measure_unigram(args.input, dev_texts, character_counts(args.input)))
+    rows = measure_bpe(args.input, dev_texts, encode, output_dir)
+    rows.extend(
+        measure_unigram(args.input, dev_texts, character_counts(args.input), output_dir)
+    )
     write_table(output_dir / "compression_ratios.tsv", rows)
-    write_plot(output_dir / "compression.svg", rows)
-    print(f"wrote {output_dir / 'compression.svg'}", file=sys.stderr)
+    write_plot(output_dir / "compression.png", rows)
+    print(f"wrote {output_dir / 'compression.png'}", file=sys.stderr)
 
 
 if __name__ == "__main__":

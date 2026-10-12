@@ -4,6 +4,7 @@ from pathlib import Path
 
 
 def load_merges(bpe_dir):
+    """Load the vocabulary and the learned merge map."""
     bpe_dir = Path(bpe_dir)
     vocab = [
         bytes.fromhex(line)
@@ -20,6 +21,7 @@ def load_merges(bpe_dir):
 
 
 def encode_line(data, merge_of):
+    """Apply the learned merges to one line of bytes."""
     # Lowest merge id is the earliest rule. Position breaks ties left to right,
     # which is how the trainer applied one rule.
     n = len(data)
@@ -72,6 +74,7 @@ def encode_line(data, merge_of):
 
 
 def encode(data, merge_of):
+    """Encode bytes, keeping each newline as token 10."""
     # Newline is byte 10 and was never merged, so it stays its own token.
     out = []
     start = 0
@@ -88,6 +91,7 @@ def encode(data, merge_of):
 
 
 def main():
+    """Encode one file into one token id per line."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=str, required=True)
     parser.add_argument("--bpe", type=str, required=True)

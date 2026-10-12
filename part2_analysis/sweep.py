@@ -1,28 +1,31 @@
-"""Sweep bits-per-character against BPE vocabulary size.
+"""Sweep bits-per-character against vocabulary size.
 
 Runs part2.py at several vocabulary sizes with the fixed Transformer, then
-writes bpc_vs_v.svg. Each run needs a GPU and takes roughly 15 to 30 minutes.
-The vocabulary sizes match the Part-1 compression sweep so the two curves
-can be compared.
+writes bpc_vs_v.png. part2.py loads the saved Part-1 tokenizer for that
+algorithm and size. Each run needs a GPU and takes roughly 15 to 30 minutes.
 
     uv run python part2_analysis/sweep.py \
         --input artifacts/part1/cleaned \
         --output artifacts/part2/sweep/ \
-        --vocab-sizes 5000,10000,20000,50000
+        --vocab-sizes 5000,10000,20000,50000 \
+        --algorithm bpe
 """
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
 DEFAULT_SIZES = [5000, 10000, 20000, 50000]
 
 
-def run_one(python, input_dir, output_dir, vocab_size):
-    run_dir = output_dir / f"v{vocab_size}"
+def run_one(python, input_dir, output_dir, vocab_size, algorithm):
+    """Train one vocabulary size, or reuse a finished run."""
+    run_dir = output_dir / algorithm / f"v{vocab_size}"
     metrics_path = run_dir / "dev_metrics.json"
     if metrics_path.is_file():
         print(f"reusing {metrics_path}", file=sys.stderr)
@@ -37,6 +40,8 @@ def run_one(python, input_dir, output_dir, vocab_size):
             str(run_dir),
             "--vocab-size",
             str(vocab_size),
+            "--algorithm",
+            algorithm,
         ],
         check=True,
     )
@@ -44,6 +49,7 @@ def run_one(python, input_dir, output_dir, vocab_size):
 
 
 def write_table(path, rows):
+    """Write bpc_vs_v.tsv."""
     with path.open("w", encoding="utf-8", newline="\n") as handle:
         handle.write("vocab_size\tdev_bpc\ttokens_per_char\tnll_per_token\n")
         for row in rows:
@@ -54,7 +60,57 @@ def write_table(path, rows):
             )
 
 
+def _find_chrome():
+    """Return a Chrome or Chromium binary, if one is installed."""
+    names = ("google-chrome", "chromium", "chromium-browser")
+    found = [shutil.which(name) for name in names]
+    found.extend(
+        [
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        ]
+    )
+    for candidate in found:
+        if candidate and Path(candidate).is_file():
+            return candidate
+    return None
+
+
+def _write_png(svg_text, path, width, height):
+    """Rasterize the chart SVG to a PNG file."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory() as tmp:
+        svg_path = Path(tmp) / "chart.svg"
+        rendered = Path(tmp) / "chart.png"
+        svg_path.write_text(svg_text, encoding="utf-8")
+        if shutil.which("rsvg-convert"):
+            subprocess.run(
+                ["rsvg-convert", "-o", str(rendered), str(svg_path)],
+                check=True,
+            )
+        else:
+            chrome = _find_chrome()
+            if chrome is None:
+                raise RuntimeError("writing the PNG needs rsvg-convert or Chrome")
+            subprocess.run(
+                [
+                    chrome,
+                    "--headless",
+                    "--disable-gpu",
+                    f"--window-size={width},{height}",
+                    f"--screenshot={rendered.resolve()}",
+                    svg_path.resolve().as_uri(),
+                ],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        path.write_bytes(rendered.read_bytes())
+
+
 def write_plot(path, rows):
+    """Write bpc_vs_v.png."""
     sizes = [row["vocab_size"] for row in rows]
     bpcs = [row["dev_bpc"] for row in rows]
     y_min = min(bpcs) * 0.98
@@ -65,12 +121,14 @@ def write_plot(path, rows):
     left, top, panel_w, panel_h = 70, 60, 580, 300
 
     def x_of(size):
+        """Return the horizontal position of a vocabulary size."""
         index = sizes.index(size)
         if len(sizes) == 1:
             return left + panel_w / 2
         return left + panel_w * index / (len(sizes) - 1)
 
     def y_of(bpc):
+        """Return the vertical position of a bits-per-character value."""
         return top + panel_h * (y_max - bpc) / (y_max - y_min)
 
     parts = [
@@ -114,10 +172,11 @@ def write_plot(path, rows):
         'text-anchor="middle" font-family="sans-serif" font-size="12">vocabulary size</text>'
     )
     parts.append("</svg>")
-    path.write_text("\n".join(parts) + "\n", encoding="utf-8")
+    _write_png("\n".join(parts) + "\n", path, width, height)
 
 
 def main():
+    """Sweep vocabulary sizes and write the bits-per-character plot."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=str, required=True)
     parser.add_argument("--output", type=str, required=True)
@@ -126,6 +185,7 @@ def main():
         type=str,
         default=",".join(str(size) for size in DEFAULT_SIZES),
     )
+    parser.add_argument("--algorithm", choices=("bpe", "unigram", "wordpiece"), default="bpe")
     args = parser.parse_args()
     sizes = [int(piece) for piece in args.vocab_sizes.split(",") if piece]
     if len(sizes) < 4:
@@ -135,7 +195,7 @@ def main():
 
     rows = []
     for vocab_size in sizes:
-        metrics = run_one(sys.executable, args.input, output_dir, vocab_size)
+        metrics = run_one(sys.executable, args.input, output_dir, vocab_size, args.algorithm)
         metrics["vocab_size"] = vocab_size
         rows.append(metrics)
         print(
@@ -145,7 +205,7 @@ def main():
         )
 
     write_table(output_dir / "bpc_vs_v.tsv", rows)
-    write_plot(output_dir / "bpc_vs_v.svg", rows)
+    write_plot(output_dir / "bpc_vs_v.png", rows)
     best = min(rows, key=lambda row: row["dev_bpc"])
     print(
         f"sweet spot V={best['vocab_size']} dev_bpc={best['dev_bpc']:.4f} "

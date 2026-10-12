@@ -5,32 +5,15 @@ import argparse
 from pathlib import Path
 
 
-# The part before the colon in an image link. Each Wikipedia uses its own
-# name for the file namespace; these are the ones that appear in the dumps.
-FILE_NAMESPACE = (
-    "datei|bild|file|image|tập tin|tập_tin|hình|tiedosto|kuva|"
-    "fájl|kép|файл|изображение|ملف|صورة|文件|图像|圖像|檔案"
-)
-FILE_TARGET = re.compile(
-    rf"(?i)^(?::|[a-z]{{1,20}}:)*(?:{FILE_NAMESPACE})\s*:"
-)
-# A category link is one closed [[Category:...]] with no nested link and no
-# line break. Balancing brackets across a missing ]] deletes the rest of the file.
-CATEGORY_LINK = re.compile(
-    r"\[\[[ \t]*(?::|[A-Za-z]{1,20}:)*"
-    r"(?:[Cc]ategory|[Kk]ategorie|[Kk]ategória|[Ll]uokka|Категория|категория|"
-    r"تصنيف|[Tt]hể loại|分类|分類|[Cc]at)\s*:[^\[\]\n]*\]\]"
-)
-
-
 def drop_file_links(text):
-    """Delete [[File:...]] links, including a caption and any link nested in it.
+    """Removes image links of the form [[File:...]]"""
 
-    An image is not an article link. Keeping the text after the pipe leaves
-    the caption parameters (mini|, liên_kết=, 250px|) in the prose. The link
-    is removed only when the target starts with a file namespace, so an
-    ordinary link such as [[Kuopio]] is unchanged.
-    """
+    # compilation of file namespaces appeared in the dumps
+    FILE_TARGET = re.compile(
+        r"(?i)^(?::|[a-z]{1,20}:)*(?:datei|bild|file|image|tập tin|tập_tin|hình|"
+        r"tiedosto|kuva|fájl|kép|файл|изображение|ملف|صورة|文件|图像|圖像|檔案)\s*:"
+    )
+
     pieces = []
     index = 0
     length = len(text)
@@ -82,11 +65,7 @@ def drop_file_links(text):
 
 
 def _table_opens_at(text, pos):
-    """A table opener is {| at the start of a line, aside from spaces or one colon.
-
-    {| {| on one line is a single opener. {| inside a sentence, as in `{|}~`,
-    is not a table.
-    """
+    """Returns whether {| starts a line, aside from spaces or one colon."""
     cursor = pos
     while cursor > 0 and text[cursor - 1] in " \t":
         cursor -= 1
@@ -98,6 +77,7 @@ def _table_opens_at(text, pos):
 
 
 def _find_table_open(text, index):
+    """Finds the first occurrence of {| at or after index."""
     while True:
         start = text.find("{|", index)
         if start < 0:
@@ -108,13 +88,7 @@ def _find_table_open(text, index):
 
 
 def drop_tables(text):
-    """Delete a wiki table from {| through the matching |}, including nested tables.
-
-    The rows are markup. Leaving them in place fills the text with lines such as
-    |- and ! Abbildung, and pushes the following section down. Only a {| that
-    starts a line opens a table, so one extra {| on the same line does not make
-    the match run into the next article.
-    """
+    """Removes wiki tables from {| to matching |}."""
     pieces = []
     index = 0
     length = len(text)
@@ -144,18 +118,11 @@ def drop_tables(text):
     return "".join(pieces)
 
 
-# Inside -{ }-, keep the first of these labels that is present.
-VARIANT_PRIORITY = ("zh-hans", "zh-cn", "zh-sg")
-
-
 def resolve_chinese_variants(text):
-    """Replace a -{ }- variant switch with one written form.
-
-    zh-hans wins, then zh-cn, then zh-sg. A switch with none of those labels
-    keeps the unmarked text, so -{于}- stays 于.
-    """
+    """Replaces -{...}- with zh-hans, otherwise zh-cn, otherwise zh-sg."""
 
     def pick(match):
+        """Choose one written form from a variant switch."""
         choices = {}
         plain = []
         for part in match.group(1).split(";"):
@@ -174,6 +141,8 @@ def resolve_chinese_variants(text):
                     continue
             if part:
                 plain.append(part)
+        # zh-hans, then zh-cn, then zh-sg
+        VARIANT_PRIORITY = ("zh-hans", "zh-cn", "zh-sg")
         for code in VARIANT_PRIORITY:
             if choices.get(code):
                 return choices[code]
@@ -186,76 +155,81 @@ def resolve_chinese_variants(text):
     previous = None
     while previous != text:
         previous = text
-        # -{{template}} starts with the same two characters. The switch is -{ not
-        # followed by another brace, and it stays on one line.
+        # -{...}- on one line, not -{{template}}
         text = re.sub(r"-{(?!\{)(.*?)}-", pick, text)
     return text
 
 
 def clean_text(text):
-    # A table has to go before headings are unwrapped. Deleting it also
-    # removes the line break it occupied, so the next heading moves up.
+    """Apply every cleaning step to one file's text."""
+    # remove wiki tables
+    # {|...|}
     text = drop_tables(text)
 
-    # convert &nbsp; -> space, &#x200B; -> nothing
+    # decode HTML entities
+    # &nbsp; &#x200B; &shy;
     text = html.unescape(text)
     text = text.replace('\xa0', ' ').replace('\u200b', '').replace('\u00ad', '')
 
-    # remove comments
-    # <!-- comment --> => ''
+    # remove HTML comments
+    # <!--...-->
     text = re.sub(r'<!--.*?-->', '', text, flags=re.DOTALL)
 
-    # <ref name="x" /> must go first. If it is left in place, the next
-    # pattern treats the tag as the start of a citation and deletes
-    # everything up to the following </ref>.
+    # remove reference tags
+    # <ref .../> <ref>...</ref>
     text = re.sub(r'<ref\b[^>]*/>', '', text, flags=re.IGNORECASE)
     text = re.sub(r'<ref\b[^>]*>.*?</ref>', '', text, flags=re.DOTALL | re.IGNORECASE)
 
     # remove templates
-    # {{template}} => ''
+    # {{...}}
     for _ in range(3):
         text = re.sub(r'\{\{[^{}]*\}\}', '', text, flags=re.DOTALL)
 
-    # -{zh-hant:馬拉拉·優素福扎伊;zh-hans:马拉拉·优素福扎伊;}- becomes
-    # 马拉拉·优素福扎伊. Done before link unwrapping so a pipe inside the
-    # switch is not read as a link pipe.
+    # resolve Chinese variant switches
+    # -{...}-
     text = resolve_chinese_variants(text)
 
-    # An image link is not prose. [[Datei:x.jpg|mini|caption]] is deleted
-    # whole, before the ordinary link rule can keep the caption.
+    # remove category and file links
+    # [[Category:...]] [[File:...]]
+    CATEGORY_LINK = re.compile(
+        r"\[\[[ \t]*(?::|[A-Za-z]{1,20}:)*"
+        r"(?:[Cc]ategory|[Kk]ategorie|[Kk]ategória|[Ll]uokka|Категория|категория|"
+        r"تصنيف|[Tt]hể loại|分类|分類|[Cc]at)\s*:[^\[\]\n]*\]\]"
+    )
     text = CATEGORY_LINK.sub("", text)
     text = drop_file_links(text)
 
-    # remove wiki link brackets
-    # [[Finland|Finnish]] => Finnish, [[Finland]] => Finland
+    # unwrap wiki links
+    # [[target|shown]] [[target]]
     text = re.sub(r'\[\[[^\]|]*\|([^\]]*)\]\]', r'\1', text)
     text = re.sub(r'\[\[([^\]]+)\]\]', r'\1', text)
 
-    # remove wiki link brackets
-    # [https://example.com Example] => Example
+    # unwrap external links
+    # [https://... label] [https://...]
     text = re.sub(r'\[https?://[^\s\]]+\s+([^\]]+)\]', r'\1', text)
     text = re.sub(r'\[https?://[^\]]+\]', ' ', text)
 
-    # remove bold and italic text
-    # '''word''' => word
+    # remove bold and italic markers
+    # ''' ''
     text = text.replace("'''", '').replace("''", '')
 
-    # section headers
-    # == Events == -> Events
+    # unwrap headings
+    # ==...== (up to 6 equal signs)
     text = re.sub(r'^\s*={2,6}\s*(.*?)\s*={2,6}\s*$', r'\1', text, flags=re.MULTILINE)
 
-    # remove list items and horizontal rules
-    # * item => item, ---- => ''
+    # remove list markers and horizontal rules
+    # * # ; : ----
     text = re.sub(r'^\s*[*#;:]+\s*', '', text, flags=re.MULTILINE)
     text = re.sub(r'^\s*-{4,}\s*$', '', text, flags=re.MULTILINE)
 
-    # convert <br> to newline, then remove leftover tags
+    # replace line-break tags and strip leftover tags
+    # <br>, <br />, <sup>...</sup>, etc.
     text = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
     text = re.sub(r'</?[a-zA-Z][^>\n]*>', '', text)
 
+    # collapse consecutive empty lines 
+    # remove trailing whitespace and collapse consecutive whitespace
     text = re.sub(r'[ \t]+$', '', text, flags=re.MULTILINE)
-    # A removed comment or template leaves the spaces that stood on either
-    # side of it. "–  cselló" and "Alphabet.  Als" are that case.
     text = re.sub(r'[ \t]{2,}', ' ', text)
     text = re.sub(r'\n{3,}', '\n\n', text)
 
@@ -263,6 +237,7 @@ def clean_text(text):
 
 
 def main():
+    """Clean every file under the input directory."""
     parser = argparse.ArgumentParser()
     parser.add_argument('--input', type=str, required=True)
     parser.add_argument('--output', type=str, required=True)
@@ -271,7 +246,6 @@ def main():
     input_path = Path(args.input)
     output_path = Path(args.output)
 
-    # recursively clean every input file
     # data/raw/fi/dev.txt -> artifacts/part1/cleaned/fi/dev.txt
     for root, _, files in os.walk(input_path):
         for filename in files:

@@ -11,6 +11,7 @@ from data import iter_split_files
 # Lines are tokenized on their own, so a newline is not a token and
 # n-grams stop at the line boundary.
 def load_encoder(bpe_dir):
+    """Load the byte-level BPE encoder, merges, and vocabulary."""
     path = Path(__file__).resolve().parent / "part1.3-encode.py"
     spec = importlib.util.spec_from_file_location("part1_3_encode", path)
     module = importlib.util.module_from_spec(spec)
@@ -24,6 +25,7 @@ def load_encoder(bpe_dir):
 
 
 def iter_raw_lines(input_dir, split):
+    """Yield each line of a split as bytes, without the newline."""
     for path in iter_split_files(input_dir, split):
         data = path.read_bytes()
         if not data:
@@ -35,12 +37,14 @@ def iter_raw_lines(input_dir, split):
 
 
 def tokenize_line(line, encode_line, merge_of, eos_id):
+    """Encode one line and append the end-of-line token."""
     ids = encode_line(line, merge_of)
     ids.append(eos_id)
     return ids
 
 
 def pack(token_ids):
+    """Pack token ids into one integer key."""
     # Token ids used here fit in 16 bits (BPE ids plus EOS).
     key = 0
     for token_id in token_ids:
@@ -49,6 +53,7 @@ def pack(token_ids):
 
 
 def train_counts(lines, order):
+    """Count n-grams up to the given order."""
     counts = [None] + [{} for _ in range(order)]
     total = 0
     for tokens in lines:
@@ -64,6 +69,7 @@ def train_counts(lines, order):
 
 
 def dev_perplexity(lines, order, counts, total, alpha=0.0, vocab_size=None):
+    """Score dev perplexity, with optional add-alpha smoothing."""
     # Unsmoothed: P(w | ctx) = C(ctx + w) / C(ctx). An unseen gram has
     # probability 0, and the corpus perplexity is then infinite.
     # Add-alpha: P(w | ctx) = (C(ctx + w) + alpha) / (C(ctx) + alpha * V),
@@ -99,6 +105,7 @@ def dev_perplexity(lines, order, counts, total, alpha=0.0, vocab_size=None):
 
 
 def format_gram(token_ids, vocab, eos_id):
+    """Format one n-gram for an error message."""
     pieces = []
     for token_id in token_ids:
         if token_id == eos_id:
@@ -112,6 +119,7 @@ def format_gram(token_ids, vocab, eos_id):
 
 
 def main():
+    """Train an n-gram model and print dev perplexity."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=str, required=True)
     parser.add_argument("--bpe", type=str, required=True)
@@ -138,6 +146,7 @@ def main():
     vocab_size = eos_id + 1
 
     def token_lines(split):
+        """Tokenize each line of a split and append the end-of-line token."""
         for line in iter_raw_lines(args.input, split):
             yield tokenize_line(line, encode_line, merge_of, eos_id)
 

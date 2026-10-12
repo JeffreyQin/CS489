@@ -8,6 +8,7 @@ from data import iter_split_files
 
 
 def train_unigram(input_dir, model_prefix, vocab_size, character_coverage=1.0, logstream=None):
+    """Train a lossless SentencePiece unigram model."""
     # The usual defaults are not reversible: NFKC rewrites characters, repeated
     # spaces are collapsed, and a character missing from training becomes
     # <unk>. Identity normalization keeps each character, whitespace-only
@@ -43,6 +44,7 @@ def train_unigram(input_dir, model_prefix, vocab_size, character_coverage=1.0, l
 
 
 def main():
+    """Train the unigram model and write unigram.model."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=str, required=True)
     parser.add_argument("--output", type=str, required=True)

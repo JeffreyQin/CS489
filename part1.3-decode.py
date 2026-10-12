@@ -3,6 +3,7 @@ from pathlib import Path
 
 
 def load_vocab(bpe_dir):
+    """Load each token's bytes from bpe_vocab.txt."""
     vocab_path = Path(bpe_dir) / "bpe_vocab.txt"
     return [
         bytes.fromhex(line)
@@ -11,6 +12,7 @@ def load_vocab(bpe_dir):
 
 
 def main():
+    """Decode one token-id file back to bytes."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=str, required=True)
     parser.add_argument("--bpe", type=str, required=True)

@@ -11,6 +11,7 @@ ALPHA = 0.004
 
 
 def unpack(key, length):
+    """Turn a packed n-gram key back into token ids."""
     token_ids = [0] * length
     for index in range(length - 1, -1, -1):
         token_ids[index] = key & 0xFFFF
@@ -19,6 +20,7 @@ def unpack(key, length):
 
 
 def main():
+    """Train the selected n-gram model and write model.json.gz."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=str, required=True)
     parser.add_argument("--bpe", type=str, required=True)
@@ -30,6 +32,7 @@ def main():
     vocab_size = eos_id + 1
 
     def token_lines():
+        """Tokenize each training line and append the end-of-line token."""
         for line in iter_raw_lines(args.input, "train"):
             yield tokenize_line(line, encode_line, merge_of, eos_id)
 

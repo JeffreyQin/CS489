@@ -4,15 +4,18 @@ import sys
 import time
 from array import array
 from pathlib import Path
-
 import numpy as np
 
 from data import iter_split_files
 
 
-# Merges do not cross newlines. A token that contained a newline could not be
-# used when each line is tokenized on its own, so 0x0a stays a single byte.
+"""
+In current implementation of BPE, merges do not cross newline boundaries
+Please see write-up for rationale.
+"""
+
 def load_corpus(input_dir):
+    """Read and concatenated all train.txt"""
     parts = []
     ends = []
     total = 0
@@ -27,6 +30,7 @@ def load_corpus(input_dir):
 
 
 def _u32_array(values):
+    """Copy values into an unsigned 32-bit array."""
     buf = np.ascontiguousarray(values, dtype=np.uint32)
     out = array("I")
     out.frombytes(buf.tobytes())
@@ -34,6 +38,7 @@ def _u32_array(values):
 
 
 def _i32_array(values):
+    """Copy values into a signed 32-bit array."""
     buf = np.ascontiguousarray(values, dtype=np.int32)
     out = array("i")
     out.frombytes(buf.tobytes())
@@ -41,6 +46,7 @@ def _i32_array(values):
 
 
 def train_bpe(raw, ends, vocab_size):
+    """Merge the most frequent pair until the vocabulary reaches vocab_size."""
     n = len(raw)
     if n == 0:
         raise ValueError("training corpus is empty")
@@ -90,10 +96,12 @@ def train_bpe(raw, ends, vocab_size):
     )
 
     def rebuild_heap():
+        """Rebuild the pair heap from the current counts."""
         heap[:] = [(-c, x, y) for (x, y), c in pair_counts.items() if c > 0]
         heapq.heapify(heap)
 
     def pop_best():
+        """Return the most frequent pair whose count is still current."""
         while heap:
             neg, x, y = heapq.heappop(heap)
             if pair_counts.get((x, y), 0) == -neg:
@@ -101,6 +109,7 @@ def train_bpe(raw, ends, vocab_size):
         return None
 
     def unlink(idx, pair):
+        """Remove one occurrence of a pair from its chain."""
         left = chain_prev[idx]
         right = chain_next[idx]
         if left >= 0:
@@ -121,6 +130,7 @@ def train_bpe(raw, ends, vocab_size):
         dirty.add(pair)
 
     def link(idx, pair):
+        """Record one new occurrence of a pair."""
         head = pair_head.get(pair, -1)
         chain_prev[idx] = -1
         chain_next[idx] = head
@@ -198,6 +208,7 @@ def train_bpe(raw, ends, vocab_size):
 
 
 def write_artifacts(output_dir, vocab, merges):
+    """Write bpe_vocab.txt and bpe_merges.txt."""
     output_dir.mkdir(parents=True, exist_ok=True)
     vocab_path = output_dir / "bpe_vocab.txt"
     merges_path = output_dir / "bpe_merges.txt"
@@ -214,6 +225,7 @@ def write_artifacts(output_dir, vocab, merges):
 
 
 def main():
+    """Train byte-level BPE and write the two artifact files."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=str, required=True)
     parser.add_argument("--output", type=str, required=True)
