@@ -118,8 +118,16 @@ def format_gram(token_ids, vocab, eos_id):
     return f"{' '.join(pieces)} (ids {ids})"
 
 
+def dev_char_count(input_dir):
+    """Count Unicode characters in the cleaned dev text."""
+    return sum(
+        len(path.read_text(encoding="utf-8"))
+        for path in iter_split_files(input_dir, "dev")
+    )
+
+
 def main():
-    """Train an n-gram model and print dev perplexity."""
+    """Train an n-gram model and print dev perplexity and bits per character."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=str, required=True)
     parser.add_argument("--bpe", type=str, required=True)
@@ -162,16 +170,22 @@ def main():
         alpha=alpha,
         vocab_size=vocab_size,
     )
+    n_chars = dev_char_count(args.input)
     if missing is None:
-        print(f"{perplexity:.6f}")
-        print(f"dev tokens={scored}", file=sys.stderr)
+        bpc = scored / n_chars * math.log2(perplexity)
+        print(f"dev perplexity={perplexity:.6f}")
+        print(
+            f"dev tokens={scored} dev chars={n_chars} dev bpc={bpc:.4f}",
+            file=sys.stderr,
+        )
     else:
-        print("inf")
+        print("dev perplexity=inf")
         print(
             f"dev perplexity is infinite; unseen {len(missing)}-gram "
             f"{format_gram(missing, vocab, eos_id)}",
             file=sys.stderr,
         )
+        print(f"dev bpc=inf ({n_chars} chars)", file=sys.stderr)
 
 
 if __name__ == "__main__":
