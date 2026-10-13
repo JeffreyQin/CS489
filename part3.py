@@ -7,7 +7,7 @@ from part3_ngram_lm import iter_raw_lines, load_encoder, tokenize_line, train_co
 
 # Lowest dev perplexity on the order/alpha sweep: bigrams, add-alpha 0.004.
 ORDER = 2
-ALPHA = 0.004
+ALPHA = 0.01
 
 
 def unpack(key, length):

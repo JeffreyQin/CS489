@@ -65,17 +65,17 @@ def write_table(path, rows):
 
 def _find_chrome():
     """Return a Chrome or Chromium binary, if one is installed."""
-    names = ("google-chrome", "chromium", "chromium-browser")
-    found = [shutil.which(name) for name in names]
-    found.extend(
-        [
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-            "/Applications/Chromium.app/Contents/MacOS/Chromium",
-        ]
+    names = (
+        "google-chrome",
+        "chromium",
+        "chromium-browser",
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
     )
-    for candidate in found:
-        if candidate and Path(candidate).is_file():
-            return candidate
+    for name in names:
+        path = shutil.which(name) or name
+        if Path(path).is_file():
+            return path
     return None
 
 
@@ -87,6 +87,7 @@ def _write_png(svg_text, path):
         svg_path = Path(tmp) / "chart.svg"
         rendered = Path(tmp) / "chart.png"
         svg_path.write_text(svg_text, encoding="utf-8")
+        # rsvg-convert, or chrome when that is not installed.
         if shutil.which("rsvg-convert"):
             subprocess.run(
                 ["rsvg-convert", "-o", str(rendered), str(svg_path)],
@@ -168,19 +169,17 @@ def write_plot(path, rows):
             f'font-family="sans-serif" font-size="22">{vocab_size // 1000}k</text>'
         )
     for algorithm, _name, color in ALGORITHMS:
-        points = []
-        for vocab_size in VOCAB_SIZES:
-            bpc = rows[(algorithm, vocab_size)][0]
-            points.append(f"{x_of(vocab_size):.1f},{y_of(bpc):.1f}")
-        parts.append(
-            f'<polyline fill="none" stroke="{color}" stroke-width="2" '
-            f'points="{" ".join(points)}"/>'
+        points = " ".join(
+            f"{x_of(size):.1f},{y_of(rows[(algorithm, size)][0]):.1f}"
+            for size in VOCAB_SIZES
         )
-        for vocab_size in VOCAB_SIZES:
-            bpc = rows[(algorithm, vocab_size)][0]
+        parts.append(
+            f'<polyline fill="none" stroke="{color}" stroke-width="2" points="{points}"/>'
+        )
+        for size in VOCAB_SIZES:
+            bpc = rows[(algorithm, size)][0]
             parts.append(
-                f'<circle cx="{x_of(vocab_size):.1f}" cy="{y_of(bpc):.1f}" '
-                f'r="3.2" fill="{color}"/>'
+                f'<circle cx="{x_of(size):.1f}" cy="{y_of(bpc):.1f}" r="3.2" fill="{color}"/>'
             )
     parts.append(
         f'<text x="{left + panel_w / 2:.0f}" y="{top + panel_h + 68}" '
@@ -223,10 +222,8 @@ def main():
     write_plot(output_dir / "bpc_vs_v.png", rows)
     print(f"wrote {output_dir / 'bpc_vs_v.png'}", file=sys.stderr)
     for algorithm, name, _color in ALGORITHMS:
-        vocab_size, (bpc, _nll, _tokens, _chars) = min(
-            ((size, rows[(algorithm, size)]) for size in VOCAB_SIZES),
-            key=lambda item: item[1][0],
-        )
+        vocab_size = min(VOCAB_SIZES, key=lambda size: rows[(algorithm, size)][0])
+        bpc = rows[(algorithm, vocab_size)][0]
         print(f"sweet spot {name} V={vocab_size} dev_bpc={bpc:.4f}", file=sys.stderr)
 
 

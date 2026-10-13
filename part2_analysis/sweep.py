@@ -1,15 +1,4 @@
-"""Sweep bits-per-character against vocabulary size.
-
-Runs part2.py at several vocabulary sizes with the fixed Transformer, then
-writes bpc_vs_v.png. part2.py loads the saved Part-1 tokenizer for that
-algorithm and size. Each run needs a GPU and takes roughly 15 to 30 minutes.
-
-    uv run python part2_analysis/sweep.py \
-        --input artifacts/part1/cleaned \
-        --output artifacts/part2/sweep/ \
-        --vocab-sizes 5000,10000,20000,50000 \
-        --algorithm bpe
-"""
+"""Train several vocabulary sizes and write one bits-per-character chart."""
 
 import argparse
 import json
@@ -62,17 +51,17 @@ def write_table(path, rows):
 
 def _find_chrome():
     """Return a Chrome or Chromium binary, if one is installed."""
-    names = ("google-chrome", "chromium", "chromium-browser")
-    found = [shutil.which(name) for name in names]
-    found.extend(
-        [
-            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-            "/Applications/Chromium.app/Contents/MacOS/Chromium",
-        ]
+    names = (
+        "google-chrome",
+        "chromium",
+        "chromium-browser",
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
     )
-    for candidate in found:
-        if candidate and Path(candidate).is_file():
-            return candidate
+    for name in names:
+        path = shutil.which(name) or name
+        if Path(path).is_file():
+            return path
     return None
 
 
@@ -84,6 +73,7 @@ def _write_png(svg_text, path, width, height):
         svg_path = Path(tmp) / "chart.svg"
         rendered = Path(tmp) / "chart.png"
         svg_path.write_text(svg_text, encoding="utf-8")
+        # rsvg-convert, or chrome when that is not installed.
         if shutil.which("rsvg-convert"):
             subprocess.run(
                 ["rsvg-convert", "-o", str(rendered), str(svg_path)],

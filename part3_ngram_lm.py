@@ -1,3 +1,16 @@
+"""
+This file was written with assistance from generative AI. 
+All AI-generated code were read-over and improved by hand for correctness.
+
+Uses of AI include
+    - Starter code for argument parsing and file path handling
+    - Implementation of critical helper utilities for corpus processing, such as
+      tokenize_lines, dev_char_count, iter_raw_lines
+    - Starter code and assistance with proofreading for the algorithm, such as 
+      train_counts, format_gram, and dev_perplexity (eval util)
+"""
+
+
 import argparse
 import importlib.util
 import math
@@ -8,12 +21,15 @@ from data import iter_split_files
 
 
 def load_encoder(bpe_dir):
-    """Load the byte-level BPE encoder, merges, and vocabulary."""
+    """Load byte-level BPE encoder, merges, and vocabulary."""
+
     path = Path(__file__).resolve().parent / "part1.3-encode.py"
     spec = importlib.util.spec_from_file_location("part1_3_encode", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     bpe_dir = Path(bpe_dir)
+
+    # one hex token per line, in id order.
     vocab = [
         bytes.fromhex(line)
         for line in (bpe_dir / "bpe_vocab.txt").read_text(encoding="utf-8").splitlines()
@@ -28,6 +44,8 @@ def iter_raw_lines(input_dir, split):
         if not data:
             continue
         parts = data.split(b"\n")
+
+        # drop empty piece left by a trailing newline.
         if data.endswith(b"\n"):
             parts.pop()
         yield from parts
@@ -50,17 +68,18 @@ def pack(token_ids):
 
 def train_counts(lines, order):
     """Count n-grams up to the given order."""
+
+    # counts[k] stores k-grams. index 0 is unused.
     counts = [None] + [{} for _ in range(order)]
     total = 0
     for tokens in lines:
         total += len(tokens)
         for index in range(len(tokens)):
-            start = max(0, index - order + 1)
-            for gram_start in range(start, index + 1):
-                length = index - gram_start + 1
-                key = pack(tokens[gram_start : index + 1])
-                table = counts[length]
-                table[key] = table.get(key, 0) + 1
+            # longest gram ending here, then each shorter one down to one token.
+            longest = min(order, index + 1)
+            for length in range(longest, 0, -1):
+                key = pack(tokens[index + 1 - length : index + 1])
+                counts[length][key] = counts[length].get(key, 0) + 1
     return counts, total
 
 
@@ -78,14 +97,16 @@ def dev_perplexity(lines, order, counts, total, alpha=0.0, vocab_size=None):
             context = tokens[index - context_len : index]
             gram = context + [token_id]
             numerator = counts[context_len + 1].get(pack(gram), 0)
+            # an empty context is counted as the number of training tokens.
             if context_len == 0:
                 denominator = total
             else:
                 denominator = counts[context_len].get(pack(context), 0)
             scored += 1
+            # one unseen gram makes the perplexity infinite.
+            if alpha == 0 and (numerator == 0 or denominator == 0):
+                return math.inf, gram, scored
             if alpha == 0:
-                if numerator == 0 or denominator == 0:
-                    return math.inf, gram, scored
                 log_sum += math.log2(numerator / denominator)
             else:
                 log_sum += math.log2(numerator + alpha) - math.log2(
@@ -119,7 +140,11 @@ def dev_char_count(input_dir):
 
 
 def main():
-    """Train an n-gram model and print dev perplexity and bits per character."""
+    """
+    Train n-gram model at a given order
+    print dev perplexity and bits per character.
+    """
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=str, required=True)
     parser.add_argument("--bpe", type=str, required=True)
@@ -127,20 +152,18 @@ def main():
     parser.add_argument("--smoothing", type=str, required=True)
     parser.add_argument("--alpha", type=float)
     args = parser.parse_args()
-    if args.order < 2:
-        parser.error("--order must be at least 2")
+   
     if args.smoothing == "none":
-        if args.alpha is not None:
-            parser.error("--alpha is only used with --smoothing add-alpha")
+        assert(args.alpha is None)
         alpha = 0.0
     elif args.smoothing == "add-alpha":
-        if args.alpha is None or args.alpha < 0:
-            parser.error("--smoothing add-alpha requires --alpha >= 0")
+        assert(args.alpha is not None)
         alpha = args.alpha
-    else:
-        parser.error("--smoothing must be none or add-alpha")
 
+    # load vocabulary from Part 1.3 encoder
     encode_line, merge_of, vocab = load_encoder(args.bpe)
+
+    # end-of-line id is one past the last bpe id.
     eos_id = len(vocab)
     vocab_size = eos_id + 1
 
@@ -149,10 +172,12 @@ def main():
         for line in iter_raw_lines(args.input, split):
             yield tokenize_line(line, encode_line, merge_of, eos_id)
 
+    # train n-gram model
     print(f"training order-{args.order} counts", file=sys.stderr)
     counts, total = train_counts(token_lines("train"), args.order)
     print(f"train tokens={total}", file=sys.stderr)
 
+    # compute perplexity on dev set
     perplexity, missing, scored = dev_perplexity(
         token_lines("dev"),
         args.order,
@@ -162,6 +187,9 @@ def main():
         vocab_size=vocab_size,
     )
     n_chars = dev_char_count(args.input)
+
+    # if no missing grams, compute bits per character
+    # otherwise perplexity is infinite
     if missing is None:
         bpc = scored / n_chars * math.log2(perplexity)
         print(f"dev perplexity={perplexity:.6f}")

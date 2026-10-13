@@ -1,5 +1,8 @@
 """
-This file was written with assistance from generative AI. Uses include
+This file was written with assistance from generative AI. 
+All AI-generated code were read-over and improved by hand for correctness.
+
+Uses of AI include
     - Code for argument parsing and file path handling
     - Implementation of helper functions like load_merges and encode
     - Assistance on the linked-list implementation of encode_line

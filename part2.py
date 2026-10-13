@@ -1,10 +1,13 @@
 """
-This file was written with assistance from generative AI. Uses include
-    - Starter code for the loading, encoding, and decoding process for each of the three tokenizers
-      (BPE, SentencePiece, WordPiece (testing)) used to optimize bits-per-character
-    - Assistance on code proofreading and improvements
-"""
+This file was written with assistance from generative AI. 
+All AI-generated code were read-over and improved by hand for correctness.
 
+Uses of AI include
+    - primary implementation of all functions used for moving, copying and saving training artifacts,
+      including copy_tokenizer, saved_tokenizer_dir, write_config, and prepare_corpus
+    - starter code for argument parsing and file path handling
+    - code proofreading and improvements
+"""
 
 
 import argparse

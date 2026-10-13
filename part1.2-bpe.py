@@ -4,7 +4,10 @@ Merges only change the two neighbor pointers around the removed tokens, so the l
 
 In current implementation, merges do not cross newline boundaries, please see write-up for rationale.
 
-This file was written with assistance from generative AI. Uses include
+This file was written with assistance from generative AI. 
+All AI-generated code were read-over and improved by hand for correctness.
+
+Uses of AI include
     - Implementation of the linked list optimization on top of the original BPE algorithm
     - Helper functions like load_corpus, _u32_array, and _i32_array
     - Autocompletion assistance with the core algorithm
