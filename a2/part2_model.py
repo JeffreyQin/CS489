@@ -1,5 +1,13 @@
 """
 Byte-level decoder-only Transformer language model.
+
+This file was written with assistance from generative AI. 
+All AI-generated code were read-over and improved by hand for correctness.
+
+Uses of AI include
+    - Autocompletion assistance with some parts of the model implementation (including __init__ and forward)
+    - Implementation of YAML config loading and checkpoint loading methods
+    - Code proofreading and improvement
 """
 
 import torch

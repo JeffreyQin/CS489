@@ -1,12 +1,11 @@
 """
 Train the Assignment 2 Transformer language model.
 
-Paths in the YAML file are resolved relative to that file's directory.
-The run writes artifacts/part2/config.yaml with those paths rewritten so the
-same file still works after the project directory is moved.
-
 This file was written with assistance from generative AI.
 All AI-generated code was read over and checked for correctness.
+
+Uses of AI include
+    - Autocompletion assistance with implementing main() (with reference to run_part1.py)
 """
 
 import argparse

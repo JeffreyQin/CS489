@@ -3,6 +3,13 @@ Minibatch training and full-dev evaluation for either language model
 
 This file was written with assistance from generative AI.
 All AI-generated code was read over and checked for correctness.
+
+Uses of AI include
+    - Autocompletion assistance with implementing the core training loop, with emphasis on 
+      syntax for WandB setup, checkpoint saving, and data logging
+    - All implementation of utilities like plot_losses, save_checkpoints, export_config,
+      build_optimizer, and evaluate_dev
+    - Code proofreading and improvement
 """
 
 import copy
@@ -76,9 +83,11 @@ def export_config(config, paths):
 
 
 def plot_losses(train_steps, train_losses, dev_epochs, dev_losses, path):
+    # Colab sets a notebook backend that this environment cannot load.
+    os.environ["MPLBACKEND"] = "Agg"
     import matplotlib
 
-    matplotlib.use("Agg")
+    matplotlib.use("Agg", force=True)
     import matplotlib.pyplot as plt
 
     figure, axes = plt.subplots(1, 2, figsize=(10, 4))

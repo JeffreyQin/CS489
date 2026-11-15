@@ -3,6 +3,11 @@ Byte-level LSTM language model
 
 This file was written with assistance from generative AI.
 All AI-generated code was read over and checked for correctness.
+
+Uses of AI include
+    - Autocompletion assistance with some parts of the LSTMModel class, including 
+      YAML config loading and checkpoint loading
+    - Code proofreading and improvement
 """
 
 import torch

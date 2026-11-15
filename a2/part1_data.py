@@ -3,6 +3,11 @@ Document-local UTF-8 byte blocks for the fixed 256-byte protocol
 
 This file was written with assistance from generative AI.
 All AI-generated code was read over and checked for correctness.
+
+Uses of AI include
+    - Document loading utilities, including load_documents and ByteBlockDataset class
+    - Autocompletion assistance for the implementation of input/target preprocessing, including collate_blocks and make_loader
+    - Code proofreading and improvement
 """
 
 import numpy as np
